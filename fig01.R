@@ -1,5 +1,20 @@
 library(patchwork)
 
+write_source_data <- function(data, figure, name, description) {
+  dir.create("source_data", showWarnings = FALSE)
+  path <- glue::glue("source_data/{figure}.xlsx")
+  wb <- if (file.exists(path)) openxlsx2::wb_load(path) else openxlsx2::wb_workbook()
+  if (name %in% wb$get_sheet_names()) wb$remove_worksheet(name)
+  data <- purrr::modify(data, \(x) tidyr::replace_na(x, NA))
+  wb$add_worksheet(name)$add_data(name, description, col_names = FALSE)
+  wb$add_data(name, data, start_row = 3, na = "NA")
+  purrr::walk2(data, seq_along(data), \(x, column)
+    purrr::walk(which(is.infinite(x)), \(row)
+      wb$add_data(name, as.character(x[row]), start_row = row + 3,
+                 start_col = column, col_names = FALSE)))
+  wb$freeze_pane(name, first_active_row = 4)$save(path, overwrite = TRUE)
+}
+
 # READ PLSDB DATA --------------------------------------------------------------
 
 defense_unification <- readxl::read_xlsx(
@@ -9,11 +24,11 @@ defense_unification <- readxl::read_xlsx(
 plsdb_metadata <- readxl::read_xlsx(
   "data/plsdb_plasmid-host_metadata.xlsx",
   col_types = c(
-    "text", "text", "logical", "text", "text", "logical", "numeric", "numeric", 
-    "text", "text", "text", "text", "text", "text", "text", "text", "text", 
-    "text", "text", "text", "text", "text", "text", "text", "numeric", 
-    "numeric", "text", "text", "text", "text", "text", "text", "text", "text", 
-    "text", "text", "text", "numeric", "numeric", "text", "text", "numeric", 
+    "text", "text", "logical", "text", "text", "logical", "numeric", "numeric",
+    "text", "text", "text", "text", "text", "text", "text", "text", "text",
+    "text", "text", "text", "text", "text", "text", "text", "numeric",
+    "numeric", "text", "text", "text", "text", "text", "text", "text", "text",
+    "text", "text", "text", "numeric", "numeric", "text", "text", "numeric",
     "text", "numeric", "text", "numeric"
   )
 )
@@ -57,31 +72,31 @@ dplyr::filter(!type %in% c("Hok/Sok", "MazEF")) |>
 
 theme_custom <- function(grid = c("none", "x", "y")) {
   grid <- match.arg(grid)
-  
+
   line_axis <- ggplot2::element_line(
     colour = "black",
     linewidth = 0.24,
     lineend = "round"
   )
-  
+
   line_grid <- ggplot2::element_line(
     colour = "#EBEBEB",
     linewidth = 0.24,
     lineend = "round"
   )
-  
+
   ggplot2::theme(
     axis.title = ggplot2::element_text(colour = "black", size = 7),
     axis.text  = ggplot2::element_text(colour = "black", size = 7),
     axis.ticks = line_axis,
     axis.line  = line_axis,
-    
+
     legend.position = "none",
-    
+
     panel.background = ggplot2::element_blank(),
     panel.border     = ggplot2::element_blank(),
     plot.background  = ggplot2::element_blank(),
-    
+
     panel.grid.major.x = if (grid == "x") line_grid else ggplot2::element_blank(),
     panel.grid.minor.x = if (grid == "x") line_grid else ggplot2::element_blank(),
     panel.grid.major.y = if (grid == "y") line_grid else ggplot2::element_blank(),
@@ -98,7 +113,7 @@ stat_n_plasmids_total <- plsdb_metadata |>
   nrow()
 
 cli::cli_alert_info("Plasmids (total): {scales::comma(stat_n_plasmids_total)}")
-  
+
 stat_n_chromosomes_total <- plsdb_metadata |>
   dplyr::distinct(host_acc) |>
   nrow()
@@ -118,7 +133,7 @@ stat_n_chromosomes_rep <- plsdb_metadata_rep |>
   nrow()
 
 cli::cli_alert_info("Chromosomes (representative): {scales::comma(stat_n_chromosomes_rep)}")
-  
+
 count_representative_replicons <- tibble::tribble(
  ~"replicon",          ~"n_replicon",
          "P",    stat_n_plasmids_rep,
@@ -154,22 +169,26 @@ plsdb_metadata_rep |>
   dplyr::summarise(n = dplyr::n(), .by = category) |>
   dplyr::mutate(p = round(n / sum(n) * 100))
 
-defense_per_plasmid <- plsdb_metadata_rep |>
+defense_per_plasmid_with_id <- plsdb_metadata_rep |>
   dplyr::distinct(plasmid_seqid) |>
   dplyr::left_join(plsdb_plasmid_defense, by = dplyr::join_by(plasmid_seqid)) |>
   dplyr::mutate(has_defense = dplyr::if_else(is.na(type), FALSE, TRUE)) |>
   dplyr::summarise(n_systems = dplyr::n(), .by = c(plasmid_seqid, has_defense)) |>
   dplyr::mutate(n_systems = dplyr::if_else(has_defense, n_systems, 0)) |>
-  dplyr::mutate(replicon = "P") |>
+  dplyr::mutate(replicon = "P")
+
+defense_per_plasmid <- defense_per_plasmid_with_id |>
   dplyr::select(-c(plasmid_seqid, has_defense))
 
-defense_per_chromosome <- plsdb_metadata_rep |>
+defense_per_chromosome_with_id <- plsdb_metadata_rep |>
   dplyr::distinct(host_acc) |>
   dplyr::left_join(plsdb_host_defense, by = dplyr::join_by(host_acc)) |>
   dplyr::mutate(has_defense = dplyr::if_else(is.na(type), FALSE, TRUE)) |>
   dplyr::summarise(n_systems = dplyr::n(), .by = c(host_acc, has_defense)) |>
   dplyr::mutate(n_systems = dplyr::if_else(has_defense, n_systems, 0)) |>
-  dplyr::mutate(replicon = "C") |>
+  dplyr::mutate(replicon = "C")
+
+defense_per_chromosome <- defense_per_chromosome_with_id |>
   dplyr::select(-c(host_acc, has_defense))
 
 defense_per_replicon <-
@@ -184,7 +203,7 @@ defense_in_replicons <- defense_per_replicon |>
 stat_n_systems_in_plasmids <- defense_in_replicons |>
   dplyr::filter(replicon == "P") |>
   dplyr::pull(n_systems)
-  
+
 cli::cli_alert_info("Defense systems in plasmids: {scales::comma(stat_n_systems_in_plasmids)}")
 
 stat_n_systems_in_chromsomes <- defense_in_replicons |>
@@ -332,6 +351,18 @@ plot_01E <- proportion_replicons_with_defense |>
 
 plot_01E
 
+count_representative_replicons |>
+  dplyr::left_join(defense_in_replicons, by = "replicon") |>
+  dplyr::left_join(count_replicon_defense_types, by = "replicon") |>
+  dplyr::left_join(proportion_replicons_with_defense, by = "replicon") |>
+  dplyr::mutate(n_with_defense = c(stat_n_plasmids_with_defense,
+                                 stat_n_chromosomes_with_defense)) |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1b-e",
+    "Fig. 1b-e: Replicon counts, defense system counts and defense prevalence."
+  )
+
 layout <- "ABCD"
 
 plot_01BCDE <- plot_01B + plot_01C + plot_01D + plot_01E +
@@ -359,15 +390,16 @@ defense_per_replicon_stats <- defense_per_replicon_filt |>
     med = median(n_systems),
     q1 = quantile(n_systems, 0.25),
     q3 = quantile(n_systems, 0.75),
+    n = dplyr::n(),
     .by = replicon
   )
 
 defense_per_replicon_stats |>
   purrr::pwalk(
-    \(replicon, avg, med, q1, q3) {
+    \(replicon, avg, med, q1, q3, n) {
       label <- dplyr::recode_values(replicon, "P" ~ "Plasmid", "C" ~ "Chromosome")
       cli::cli_alert_info(
-        "{label}: mean = {round(avg)}, median = {med}, IQR = {q1}-{q3}"
+        "{label}: mean = {round(avg)}, median = {med}, IQR = {q1}-{q3}, n = {n}"
       )
     }
   )
@@ -439,7 +471,25 @@ plot_01F <- defense_per_replicon_filt |>
 
 plot_01F
 
-plasmid_defense_per_length <- plsdb_metadata_rep |>
+dplyr::bind_rows(
+  defense_per_plasmid_with_id |> dplyr::rename(sequence_id = plasmid_seqid),
+  defense_per_chromosome_with_id |> dplyr::rename(sequence_id = host_acc)
+) |>
+  dplyr::filter(dplyr::between(n_systems, 1, 100)) |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1f (observations)",
+    "Fig. 1f: Defense systems per replicon."
+  )
+
+defense_per_replicon_stats |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1f (summary)",
+    "Fig. 1f: Summary statistics for defense systems per replicon."
+  )
+
+plasmid_defense_per_length_with_id <- plsdb_metadata_rep |>
   dplyr::distinct(plasmid_seqid, plasmid_length) |>
   dplyr::left_join(plsdb_plasmid_defense, by = dplyr::join_by(plasmid_seqid)) |>
   dplyr::filter(!is.na(type)) |>
@@ -447,12 +497,14 @@ plasmid_defense_per_length <- plsdb_metadata_rep |>
   dplyr::mutate(
     sys_per_mbp = n_systems / (plasmid_length / 1000000),
     sys_per_kbp = n_systems / (plasmid_length / 1000)
-  ) |>
+  )
+
+plasmid_defense_per_length <- plasmid_defense_per_length_with_id |>
   dplyr::select(-c(plasmid_seqid)) |>
   dplyr::rename(length = plasmid_length) |>
   dplyr::mutate(replicon = "P")
 
-chromosome_defense_per_length <- plsdb_metadata_rep |>
+chromosome_defense_per_length_with_id <- plsdb_metadata_rep |>
   dplyr::distinct(host_acc, host_length) |>
   dplyr::slice_head(n = 1, by = host_acc) |>
   dplyr::left_join(plsdb_host_defense, by = dplyr::join_by(host_acc)) |>
@@ -461,7 +513,9 @@ chromosome_defense_per_length <- plsdb_metadata_rep |>
   dplyr::mutate(
     sys_per_mbp = n_systems / (host_length / 1000000),
     sys_per_kbp = n_systems / (host_length / 1000)
-  ) |>
+  )
+
+chromosome_defense_per_length <- chromosome_defense_per_length_with_id |>
   dplyr::select(-c(host_acc)) |>
   dplyr::rename(length = host_length) |>
   dplyr::mutate(replicon = "C")
@@ -550,6 +604,26 @@ plot_01G <- replicon_defense_per_length |>
   ggplot2::coord_cartesian(clip = "off")
 
 plot_01G
+
+dplyr::bind_rows(
+  plasmid_defense_per_length_with_id |>
+    dplyr::rename(sequence_id = plasmid_seqid, length = plasmid_length) |>
+    dplyr::mutate(replicon = "P"),
+  chromosome_defense_per_length_with_id |>
+    dplyr::rename(sequence_id = host_acc, length = host_length) |>
+    dplyr::mutate(replicon = "C")
+) |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1g (observations)",
+    "Fig. 1g: Replicon lengths and defense systems per Mb."
+  )
+
+defense_per_length_stats |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1g (summary)",
+    "Fig. 1g: Mean and median defense systems per Mb.")
 
 plasmid_defense_encoding_proportion <- plsdb_metadata_rep |>
   dplyr::distinct(plasmid_seqid, plasmid_length) |>
@@ -650,6 +724,20 @@ plot_01H <- plasmid_defense_encoding_proportion |>
 
 plot_01H
 
+plasmid_defense_encoding_proportion |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1h (observations)",
+    "Fig. 1h: Plasmid lengths and fractions encoding defense systems."
+  )
+
+defense_proportion_stats |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1h (summary)",
+    "Fig. 1h: Mean and median percentages encoding defense systems."
+  )
+
 layout <- "ABC"
 
 plot_01FGH <- plot_01F + plot_01G + plot_01H +
@@ -732,7 +820,7 @@ plsdb_metadata_taxa_out <- plsdb_metadata |>
   dplyr::left_join(taxonomy_resolved, by = dplyr::join_by(host_acc)) |>
   dplyr::rename(gtdb_domain = resolved_d, gtdb_phylum = resolved_p)
 
-plsdb_metadata_taxa_out |> 
+plsdb_metadata_taxa_out |>
   writexl::write_xlsx(
     "data/plsdb_plasmid-host_metadata_with_taxonomy.xlsx"
   )
@@ -1080,6 +1168,36 @@ plot_01I <-
 
 plot_01I
 
+plot_heatmap$data |>
+  dplyr::rename(prevalence_display = prevalence) |>
+  dplyr::left_join(
+    system_count_by_taxa |>
+      dplyr::mutate(resolved_p = stringr::str_remove(resolved_p, "p__")) |>
+      dplyr::select(resolved_p, type, prevalence),
+    by = c("resolved_p", "type")
+  ) |>
+  dplyr::mutate(n_plasmids_with_system = round(prevalence * n_plasmid_in_phylum)) |>
+  dplyr::select(-n_system_in_phylum) |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1i (prevalence)",
+    "Fig. 1i: Defense system prevalence by phylum."
+  )
+
+plot_count_sys$data |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1i (system counts)",
+    "Fig. 1i: Counts by defense system type."
+  )
+
+plot_count_tax$data |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1i (plasmid counts)",
+    "Fig. 1i: Plasmid counts by phylum."
+  )
+
 plot_01I |>
   ggplot2::ggsave(
     filename = "plots/fig01_I.pdf",
@@ -1385,6 +1503,36 @@ plot_S02 <-
 
 plot_S02
 
+plot_heatmap$data |>
+  dplyr::rename(prevalence_display = prevalence) |>
+  dplyr::left_join(
+    system_count_by_taxa |>
+      dplyr::mutate(resolved_p = stringr::str_remove(resolved_p, "p__")) |>
+      dplyr::select(resolved_p, type, prevalence),
+    by = c("resolved_p", "type")
+  ) |>
+  dplyr::mutate(n_plasmids_with_system = round(prevalence * n_plasmid_in_phylum)) |>
+  dplyr::select(-n_system_in_phylum) |>
+  write_source_data(
+    "source_data_supplementary_fig02",
+    "S Fig. 2 (prevalence)",
+    "Supplementary Fig. 2: Defense system prevalence by phylum."
+  )
+
+plot_count_sys$data |>
+  write_source_data(
+    "source_data_supplementary_fig02",
+    "S Fig. 2 (system counts)",
+    "Supplementary Fig. 2: Counts by defense system type."
+  )
+
+plot_count_tax$data |>
+  write_source_data(
+    "source_data_supplementary_fig02",
+    "S Fig. 2 (phylum counts)",
+    "Supplementary Fig. 2: Plasmid counts by phylum."
+  )
+
 plot_S02 |>
   ggplot2::ggsave(
     filename = "plots/figS02.pdf",
@@ -1444,7 +1592,7 @@ system_types_by_taxa_vs_model |>
     }
   )
 
-plot_S04 <- system_types_by_taxa_vs_model |>
+plot_ED02 <- system_types_by_taxa_vs_model |>
   ggplot2::ggplot(ggplot2::aes(x = predicted_value, y = residual)) +
   ggrepel::geom_text_repel(
     ggplot2::aes(label = outlier_label),
@@ -1542,11 +1690,19 @@ plot_S04 <- system_types_by_taxa_vs_model |>
   ) +
   ggplot2::coord_cartesian(clip = "off")
 
-plot_S04
+plot_ED02
 
-plot_S04 |>
+system_types_by_taxa_vs_model |>
+  dplyr::mutate(residual_sd = residual_sd, outlier_threshold = threshold) |>
+  write_source_data(
+    "source_data_extended_data_fig02",
+    "ED Fig. 2",
+    "Extended Data Fig. 2: Observed and predicted defense diversity by phylum."
+  )
+
+plot_ED02 |>
   ggplot2::ggsave(
-    filename = "plots/figS04.pdf",
+    filename = "plots/figED02.pdf",
     width = 88.2,
     height = 40,
     units = "mm"
@@ -1587,7 +1743,7 @@ def_type_matrix <- plasmid_defense_types |>
 if (!file.exists("data/plsdb_defense_type_affinity.xlsx")) {
   def_type_affinity <- def_type_matrix |>
     CooccurrenceAffinity::affinity(row.or.col = "col", squarematrix = c("all"))
-  
+
   writexl::write_xlsx(
     def_type_affinity$all,
     "data/plsdb_defense_type_affinity.xlsx"
@@ -1644,7 +1800,7 @@ def_subtype_matrix <- plasmid_defense_subtypes |>
 if (!file.exists("data/plsdb_defense_subtype_affinity.xlsx")) {
   def_subtype_affinity <- def_subtype_matrix |>
     CooccurrenceAffinity::affinity(row.or.col = "col", squarematrix = c("all"))
-  
+
   writexl::write_xlsx(
     def_subtype_affinity$all,
     "data/plsdb_defense_subtype_affinity.xlsx"
@@ -1677,7 +1833,7 @@ purrr::pwalk(
   }
 )
 
-def_type_affinity_data <- def_type_affinity$all |>
+def_type_affinity_data <- def_type_affinity_all |>
   dplyr::mutate(
     p_value = as.double(p_value)
   ) |>
@@ -1718,15 +1874,13 @@ fill_limit <- max(
   abs(min(def_type_affinity_data$alpha_mle, na.rm = TRUE))
 )
 
-def_type_affinity_y_axis <- rev(colnames(def_type_affinity$occur_mat[-1])) |>
+def_type_affinity_y_axis <- rev(colnames(def_type_matrix)[-1]) |>
   intersect(def_type_affinity_data$entity_2)
 
-def_type_affinity_x_axis <- colnames(
-  def_type_affinity$occur_mat
-)[-length(colnames(def_type_affinity$occur_mat))] |>
+def_type_affinity_x_axis <- colnames(def_type_matrix)[-ncol(def_type_matrix)] |>
   intersect(def_type_affinity_data$entity_1)
 
-plot_S05 <- def_type_affinity_data |>
+plot_ED03 <- def_type_affinity_data |>
   ggplot2::ggplot(ggplot2::aes(x = entity_1, y = entity_2, fill = alpha_mle)) +
   ggplot2::geom_tile(colour = "#575653") +
   ggplot2::geom_point(
@@ -1764,13 +1918,13 @@ plot_S05 <- def_type_affinity_data |>
     axis.title.x = ggplot2::element_blank(),
     axis.title.y = ggplot2::element_blank(),
     axis.text.x = ggplot2::element_text(
-      size = 5,
+      size = 7,
       colour = "black",
       angle = 90,
       hjust = 1,
       vjust = 0.5
     ),
-    axis.text.y = ggplot2::element_text(size = 5, colour = "black"),
+    axis.text.y = ggplot2::element_text(size = 7, colour = "black"),
     axis.ticks.x = ggplot2::element_blank(),
     axis.ticks.y = ggplot2::element_blank(),
     panel.border = ggplot2::element_blank(),
@@ -1790,17 +1944,30 @@ plot_S05 <- def_type_affinity_data |>
     plot.margin = ggplot2::margin(2, 2, 0, 0)
   )
 
-plot_S05
+plot_ED03
 
-plot_S05 |>
+def_type_affinity_data |>
+  dplyr::left_join(
+    def_type_affinity_all |>
+      dplyr::select(entity_1, entity_2, obs_cooccur_X, total_N,
+                    alpha_mle_original = alpha_mle),
+    by = c("entity_1", "entity_2")
+  ) |>
+  write_source_data(
+    "source_data_extended_data_fig03",
+    "ED Fig. 3",
+    "Extended Data Fig. 3: Defense system co-occurrence counts and affinities."
+  )
+
+plot_ED03 |>
   ggplot2::ggsave(
-    filename = "plots/figS05.pdf",
+    filename = "plots/figED03.pdf",
     width = 182.4,
     height = 182.4,
     units = "mm"
   )
 
-top_10_def_subtype_affinity <- def_subtype_affinity$all |>
+top_10_def_subtype_affinity <- def_subtype_affinity_all |>
   tibble::as_tibble() |>
   dplyr::filter(entity_1_count_mA >= 50 & entity_2_count_mB >= 50) |>
   dplyr::arrange(dplyr::desc(alpha_mle)) |>
@@ -1957,10 +2124,21 @@ plot_cooccurring_alpha <- top_10_def_subtype_affinity |>
 plot_cooccurring_alpha
 
 plot_01J <-
-  plot_cooccurring_text + plot_cooccurring_alpha + 
+  plot_cooccurring_text + plot_cooccurring_alpha +
   patchwork::plot_layout(widths = c(4, 1))
 
 plot_01J
+
+top_10_def_subtype_affinity |>
+  dplyr::left_join(
+    def_subtype_affinity_all |> dplyr::select(entity_1, entity_2, total_N),
+    by = c("entity_1", "entity_2")
+  ) |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1j",
+    "Fig. 1j: Defense subtype co-occurrence counts and affinities."
+  )
 
 plot_01J |>
   ggplot2::ggsave(
@@ -2014,7 +2192,7 @@ chromosome_system_count_by_taxa <- plsdb_metadata |>
 
 system_count_by_taxa_comparison <- plasmid_system_count_by_taxa |>
   dplyr::full_join(
-    chromosome_system_count_by_taxa, 
+    chromosome_system_count_by_taxa,
     by = dplyr::join_by(gtdb_phylum, total_hosts, total_plasmids, subtype)
   ) |>
   dplyr::mutate(dplyr::across(dplyr::everything(), ~ tidyr::replace_na(., 0))) |>
@@ -2126,9 +2304,9 @@ ar53_p_tree <- treeio::read.tree("data/gtdb/ar53_r220_phylum.tree")
 
 ar53_p_tip_labels <- ar53_p_tree[["tip.label"]]
 
-gtdb_archaea <- gtdb_taxonomy |> 
+gtdb_archaea <- gtdb_taxonomy |>
   dplyr::filter(gtdb_d == "d__Archaea") |>
-  dplyr::distinct(gtdb_p) |> 
+  dplyr::distinct(gtdb_p) |>
   dplyr::pull()
 
 tip_labels_keep_ar53 <- system_count_by_taxa_comparison_filt |>
@@ -2344,6 +2522,24 @@ plot_01K <- plot_odds_sum_sys + plot_heatmap +
   patchwork::plot_layout(heights = c(1, 4))
 
 plot_01K
+
+plot_heatmap$data |>
+  dplyr::mutate(log_odds_display = pmax(-log(clip), pmin(log(clip), log_odds_cc))) |>
+  dplyr::select(gtdb_phylum, subtype, total_hosts, hosts_w_sys,
+                total_plasmids, plasmids_w_sys, log_odds_cc, log_odds_display,
+                p_value, p_adj, dot) |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1k (enrichment)",
+    "Fig. 1k: Defense enrichment by subtype and phylum."
+  )
+
+plot_odds_sum_sys$data |>
+  write_source_data(
+    "source_data_fig01",
+    "Fig. 1k (scores)",
+    "Fig. 1k: Enrichment scores by defense subtype."
+  )
 
 plot_01K |>
   ggplot2::ggsave(
@@ -2679,14 +2875,32 @@ plot_count_tax <- count_tax |>
 
 plot_count_tax
 
-plot_S06 <- plot_odds_sum_sys + plot_heatmap +
+plot_S03 <- plot_odds_sum_sys + plot_heatmap +
   patchwork::plot_layout(heights = c(1, 4))
 
-plot_S06
+plot_S03
 
-plot_S06 |>
+plot_heatmap$data |>
+  dplyr::mutate(log_odds_display = pmax(-log(clip), pmin(log(clip), log_odds_cc))) |>
+  dplyr::select(gtdb_phylum, subtype, total_hosts, hosts_w_sys,
+                total_plasmids, plasmids_w_sys, log_odds_cc, log_odds_display,
+                p_value, p_adj, dot) |>
+  write_source_data(
+    "source_data_supplementary_fig03",
+    "S Fig. 3 (enrichment)",
+    "Supplementary Fig. 3: Defense enrichment by subtype and phylum."
+  )
+
+plot_odds_sum_sys$data |>
+  write_source_data(
+    "source_data_supplementary_fig03",
+    "S Fig. 3 (scores)",
+    "Supplementary Fig. 3: Enrichment scores by defense subtype."
+  )
+
+plot_S03 |>
   ggplot2::ggsave(
-    filename = "plots/figS06.pdf",
+    filename = "plots/figS03.pdf",
     width = 450,
     height = 140,
     units = "mm",

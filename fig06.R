@@ -1,6 +1,20 @@
+write_source_data <- function(data, figure, name, description) {
+  dir.create("source_data", showWarnings = FALSE)
+  path <- glue::glue("source_data/{figure}.xlsx")
+  wb <- if (file.exists(path)) openxlsx2::wb_load(path) else openxlsx2::wb_workbook()
+  if (name %in% wb$get_sheet_names()) wb$remove_worksheet(name)
+  data <- purrr::modify(data, \(x) tidyr::replace_na(x, NA))
+  wb$add_worksheet(name)$add_data(name, description, col_names = FALSE)
+  wb$add_data(name, data, start_row = 3, na = "NA")
+  purrr::walk2(data, seq_along(data), \(x, column)
+    purrr::walk(which(is.infinite(x)), \(row)
+      wb$add_data(name, as.character(x[row]), start_row = row + 3,
+                 start_col = column, col_names = FALSE)))
+  wb$freeze_pane(name, first_active_row = 4)$save(path, overwrite = TRUE)
+}
 
 gtdb_r226_taxonomy <- readr::read_tsv(
-  "data/gtdb/bac120_taxonomy_r226.tsv", 
+  "data/gtdb/bac120_taxonomy_r226.tsv",
   col_names = c("accession", "taxonomy"), col_types = c("c", "c")
 )
 
@@ -10,7 +24,7 @@ gtdb_r226_assemblies <- gtdb_r226_taxonomy |>
 
 # CHECK WHAT NEEDS TAXONOMY UPDATED
 
-plasmid_host_raw <- readr::read_tsv("data/transfers_plasmid_host.tsv") 
+plasmid_host_raw <- readr::read_tsv("data/transfers_plasmid_host.tsv")
 plasmid_plasmid_raw <- readr::read_tsv("data/transfers_plasmid_plasmid.tsv")
 whole_plasmid_chromosome_raw <- readr::read_tsv("data/transfers_whole_plasmid_chromosome.tsv")
 whole_plasmid_plasmid_raw <- readr::read_tsv("data/transfers_whole_plasmid_plasmid.tsv")
@@ -62,14 +76,14 @@ assemblies_todo |>
 # RUN GTDB-TK ON ASSEMBLIES TO GENERATE SUMMARIES
 
 gtdbtk_bac_summary <- readr::read_tsv(
-  "data/gtdbtk.bac120.summary.tsv", 
-  na = "N/A", 
+  "data/gtdbtk.bac120.summary.tsv",
+  na = "N/A",
   col_types = list("c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c")
 )
 
 gtdbtk_ar_summary <- readr::read_tsv(
-  "data/gtdbtk.ar53.summary.tsv", 
-  na = "N/A", 
+  "data/gtdbtk.ar53.summary.tsv",
+  na = "N/A",
   col_types = list("c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c")
 )
 
@@ -148,7 +162,7 @@ plsdb_plasmid_defense <- plsdb_plasmid_defense_raw |>
 
 # PLASMID-CHROMOSOME -----------------------------------------------------------
 
-plasmid_host <- plasmid_host_raw |> 
+plasmid_host <- plasmid_host_raw |>
   dplyr::filter(!type %in% c("Hok/Sok", "MazEF"))
 
 plasmid_host_taxa <- plasmid_host |>
@@ -169,7 +183,7 @@ plasmid_host_missing <- plasmid_host_taxa |>
 
 # PLASMID-PLASMID --------------------------------------------------------------
 
-plasmid_plasmid <- plasmid_plasmid_raw |> 
+plasmid_plasmid <- plasmid_plasmid_raw |>
   dplyr::filter(!type %in% c("Hok/Sok", "MazEF"))
 
 plasmid_plasmid_taxa <- plasmid_plasmid |>
@@ -201,7 +215,7 @@ whole_plasmid_chromosome <- whole_plasmid_chromosome_raw |>
 whole_plasmid_chromosome_taxa <- whole_plasmid_chromosome |>
   dplyr::select(assembly_plasmid, assembly_host, Query_name, Ref_name) |>
   dplyr::rename(
-    query_assembly = assembly_plasmid, target_assembly = assembly_host, 
+    query_assembly = assembly_plasmid, target_assembly = assembly_host,
     query_id = Query_name, target_id = Ref_name
   ) |>
   attach_taxonomy() |>
@@ -261,7 +275,7 @@ whole_plasmid_taxa <- whole_plasmid |>
   dplyr::filter(!is.na(assembly_rep)) |>
   dplyr::select(assembly, assembly_rep, Member, Representative) |>
   dplyr::rename(
-    query_assembly = assembly, target_assembly = assembly_rep, 
+    query_assembly = assembly, target_assembly = assembly_rep,
     query_id = Member, target_id = Representative
     ) |>
   attach_taxonomy() |>
@@ -398,10 +412,23 @@ plot <- all_clean_w_coord |>
 
 plot
 
-plot |> 
+all_clean_w_coord |>
+  dplyr::filter(!transfer_id %in% drop_ids) |>
+  write_source_data(
+    "source_data_fig06", "Fig. 6F (transfers)",
+    "Fig. 6f: Transfer records with accession IDs, coordinates and taxonomy."
+  )
+plot$data |>
+  dplyr::mutate(n = tidyr::replace_na(n, 0L)) |>
+  write_source_data(
+    "source_data_fig06", "Fig. 6F (counts)",
+    "Fig. 6f: Transfer counts by category and taxonomic distance."
+  )
+
+plot |>
   ggplot2::ggsave(
-    filename = "plots/fig06_F.pdf", 
-    height = 40, width = 160, 
+    filename = "plots/fig06_F.pdf",
+    height = 40, width = 160,
     units = "mm"
   )
 

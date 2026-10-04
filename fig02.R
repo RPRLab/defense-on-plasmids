@@ -1,15 +1,30 @@
 library(patchwork)
 
+write_source_data <- function(data, figure, name, description) {
+  dir.create("source_data", showWarnings = FALSE)
+  path <- glue::glue("source_data/{figure}.xlsx")
+  wb <- if (file.exists(path)) openxlsx2::wb_load(path) else openxlsx2::wb_workbook()
+  if (name %in% wb$get_sheet_names()) wb$remove_worksheet(name)
+  data <- purrr::modify(data, \(x) tidyr::replace_na(x, NA))
+  wb$add_worksheet(name)$add_data(name, description, col_names = FALSE)
+  wb$add_data(name, data, start_row = 3, na = "NA")
+  purrr::walk2(data, seq_along(data), \(x, column)
+    purrr::walk(which(is.infinite(x)), \(row)
+      wb$add_data(name, as.character(x[row]), start_row = row + 3,
+                 start_col = column, col_names = FALSE)))
+  wb$freeze_pane(name, first_active_row = 4)$save(path, overwrite = TRUE)
+}
+
 # READ PLSDB DATA --------------------------------------------------------------
 
 plsdb_metadata <- readxl::read_xlsx(
   "data/plsdb_plasmid-host_metadata.xlsx",
   col_types = c(
-    "text", "text", "logical", "text", "text", "logical", "numeric", "numeric", 
-    "text", "text", "text", "text", "text", "text", "text", "text", "text", 
-    "text", "text", "text", "text", "text", "text", "text", "numeric", 
-    "numeric", "text", "text", "text", "text", "text", "text", "text", "text", 
-    "text", "text", "text", "numeric", "numeric", "text", "text", "numeric", 
+    "text", "text", "logical", "text", "text", "logical", "numeric", "numeric",
+    "text", "text", "text", "text", "text", "text", "text", "text", "text",
+    "text", "text", "text", "text", "text", "text", "text", "numeric",
+    "numeric", "text", "text", "text", "text", "text", "text", "text", "text",
+    "text", "text", "text", "numeric", "numeric", "text", "text", "numeric",
     "text", "numeric", "text", "numeric"
   )
 )
@@ -37,31 +52,31 @@ plsdb_plasmid_defense <- plsdb_plasmid_defense_raw |>
 
 theme_custom <- function(grid = c("none", "x", "y")) {
   grid <- match.arg(grid)
-  
+
   line_axis <- ggplot2::element_line(
     colour = "black",
     linewidth = 0.24,
     lineend = "round"
   )
-  
+
   line_grid <- ggplot2::element_line(
     colour = "#EBEBEB",
     linewidth = 0.24,
     lineend = "round"
   )
-  
+
   ggplot2::theme(
     axis.title = ggplot2::element_text(colour = "black", size = 7),
     axis.text  = ggplot2::element_text(colour = "black", size = 7),
     axis.ticks = line_axis,
     axis.line  = line_axis,
-    
+
     legend.position = "none",
-    
+
     panel.background = ggplot2::element_blank(),
     panel.border     = ggplot2::element_blank(),
     plot.background  = ggplot2::element_blank(),
-    
+
     panel.grid.major.x = if (grid == "x") line_grid else ggplot2::element_blank(),
     panel.grid.minor.x = if (grid == "x") line_grid else ggplot2::element_blank(),
     panel.grid.major.y = if (grid == "y") line_grid else ggplot2::element_blank(),
@@ -127,10 +142,10 @@ plot_02A <- has_defense_vs_length_combined |>
     text = ggplot2::element_text(size = 7, colour = "black"),
     axis.text = ggplot2::element_text(size = 7, colour = "black"),
     line = ggplot2::element_line(linewidth = 0.24),
-    
+
     axis.text.x = ggplot2::element_text(size = 7, colour = "black"),
     axis.text.y = ggplot2::element_text(size = 7, colour = "black"),
-    
+
     axis.ticks.x = ggplot2::element_line(
       linewidth = 0.24,
       lineend = "round"
@@ -152,7 +167,7 @@ plot_02A <- has_defense_vs_length_combined |>
     ),
     panel.grid.minor.x = ggplot2::element_blank(),
     panel.grid.minor.y = ggplot2::element_blank(),
-    
+
     strip.background = ggplot2::element_rect(
       linewidth = 0.24,
       fill = NA,
@@ -174,6 +189,13 @@ plot_02A <- has_defense_vs_length_combined |>
 
 plot_02A
 
+has_defense_vs_length_combined |>
+  write_source_data(
+    "source_data_fig02",
+    "Fig. 2a",
+    "Fig. 2a: Plasmid lengths (bp), mobility and defense status."
+  )
+
 plot_02A |>
   ggplot2::ggsave(
     filename = "plots/fig02_A.pdf",
@@ -183,26 +205,22 @@ plot_02A |>
     dpi = 300
   )
 
-stat_p_gt50kb_w_defense <- plsdb_metadata_rep |>
-  dplyr::left_join(
-    plsdb_plasmid_defense,
-    by = dplyr::join_by(plasmid_seqid)
-  ) |>
-  dplyr::mutate(
-    has_defense = dplyr::case_when(!is.na(type) ~ TRUE, .default = FALSE)
-  ) |>
+stat_p_ge50kb_w_defense <- has_defense_vs_length |>
   dplyr::mutate(
     size_bin = dplyr::case_when(
-      dplyr::between(plasmid_length, 0, 49999) ~ "<50",
-      plasmid_length > 49999 ~ "≥50"
+      plasmid_length < 50000 ~ "<50",
+      plasmid_length >= 50000 ~ "≥50"
     )
   ) |>
-  dplyr::summarise(n = dplyr::n(), .by = c(size_bin, has_defense)) |>
-  dplyr::arrange(size_bin, has_defense) |>
-  dplyr::mutate(p = n / sum(n) * 100, .by = size_bin) |>
-  dplyr::filter(has_defense == TRUE)
+  dplyr::summarise(
+    n_total = dplyr::n_distinct(plasmid_seqid),
+    n_with_defense = dplyr::n_distinct(plasmid_seqid[has_defense == "With Defense"]),
+    .by = size_bin
+  ) |>
+  dplyr::arrange(size_bin) |>
+  dplyr::mutate(p = n_with_defense / n_total * 100)
 
-stat_p_gt50kb_w_defense
+stat_p_ge50kb_w_defense
 
 functional_categories_plsdb_raw <- readr::read_tsv(
   "data/plsdb_gene_annotations.tsv"
@@ -235,11 +253,11 @@ keep <- functional_categories_plsdb_raw |>
 
 all_gene_counts <- functional_categories_plsdb_raw |>
   dplyr::rename(plasmid_seqid = seqid) |>
-  dplyr::summarise(total_genes = dplyr::n(), .by = plasmid_seqid)
+  dplyr::summarise(total_genes = dplyr::n_distinct(start, end), .by = plasmid_seqid)
 
 defense_gene_counts <- functional_categories_plsdb |>
   dplyr::filter(!is.na(type)) |>
-  dplyr::summarise(defense_genes = dplyr::n(), .by = plasmid_seqid)
+  dplyr::summarise(defense_genes = dplyr::n_distinct(start, end), .by = plasmid_seqid)
 
 gene_counts <- all_gene_counts |>
   dplyr::left_join(defense_gene_counts, by = dplyr::join_by(plasmid_seqid)) |>
@@ -307,7 +325,7 @@ has_defense_vs_length |>
   dplyr::filter(mobility == "Conjugative") |>
   dplyr::summarise(n = dplyr::n(), .by = has_defense) |>
   dplyr::mutate(p = round(n / sum(n) * 100))
-  
+
 plot_02B <- has_defense_vs_length_combined_binned |>
   ggplot2::ggplot(
     ggplot2::aes(
@@ -355,10 +373,10 @@ plot_02B <- has_defense_vs_length_combined_binned |>
     text = ggplot2::element_text(size = 7, colour = "black"),
     axis.text = ggplot2::element_text(size = 7, colour = "black"),
     line = ggplot2::element_line(linewidth = 0.24),
-    
+
     axis.text.x = ggplot2::element_text(size = 7, colour = "black"),
     axis.text.y = ggplot2::element_text(size = 7, colour = "black"),
-    
+
     axis.ticks.x = ggplot2::element_line(
       linewidth = 0.24,
       lineend = "round"
@@ -380,7 +398,7 @@ plot_02B <- has_defense_vs_length_combined_binned |>
     ),
     panel.grid.minor.x = ggplot2::element_blank(),
     panel.grid.minor.y = ggplot2::element_blank(),
-    
+
     strip.background = ggplot2::element_rect(
       linewidth = 0.24,
       fill = NA,
@@ -401,6 +419,14 @@ plot_02B <- has_defense_vs_length_combined_binned |>
   ggplot2::coord_cartesian(clip = "off")
 
 plot_02B
+
+has_defense_vs_length_combined_binned |>
+  dplyr::select(size_bin, has_defense, mobility, n) |>
+  write_source_data(
+    "source_data_fig02",
+    "Fig. 2b",
+    "Fig. 2b: Plasmid counts by size, mobility and defense status."
+  )
 
 plot_02B |>
   ggplot2::ggsave(
@@ -527,6 +553,14 @@ fig_02C <- nsys_per_length_filt |>
   ggplot2::guides(colour = "none")
 
 fig_02C
+
+nsys_per_length_filt |>
+  dplyr::select(-n) |>
+  write_source_data(
+    "source_data_fig02",
+    "Fig. 2c (observations)",
+    "Fig. 2c: Plasmid lengths (bp) and defense system counts."
+  )
 
 fig_02C |>
   ggplot2::ggsave(
@@ -863,6 +897,19 @@ plot_02D <- plot_count + plot_segment +
 
 plot_02D
 
+pcn_enrichment_sample |>
+  dplyr::filter(subtype != "SoFic") |>
+  dplyr::mutate(pcn_split = pcn_split) |>
+  dplyr::select(
+    subtype, pcn_split, high_n_present, high_n_total, low_n_present,
+    low_n_total, system_count, log2_or, p_adjusted, significant
+  ) |>
+  write_source_data(
+    "source_data_fig02",
+    "Fig. 2d",
+    "Fig. 2d: Defense subtype enrichment by plasmid copy number."
+  )
+
 plot_02D |>
   ggplot2::ggsave(
     filename = "plots/fig02_D.pdf",
@@ -1040,14 +1087,31 @@ plot_count <- pcn_summary |>
 
 plot_count
 
-plot_S08 <- plot_pcn + plot_breadth + plot_count +
+plot_S04 <- plot_pcn + plot_breadth + plot_count +
   patchwork::plot_layout(nrow = 1, widths = c(3, 1, 1))
 
-plot_S08
+plot_S04
 
-plot_S08 |>
+pcn_summary |>
+  dplyr::select(plasmid_seqid, subtype, pcn) |>
+  write_source_data(
+    "source_data_supplementary_fig04",
+    "S Fig. 4 (PCN, subtype)",
+    "Supplementary Fig. 4: Plasmid copy numbers by defense subtype."
+  )
+
+pcn_summary |>
+  dplyr::distinct(subtype, pcn_breadth, n) |>
+  dplyr::mutate(pcn_breadth_display = pcn_breadth + 1) |>
+  write_source_data(
+    "source_data_supplementary_fig04",
+    "S Fig. 4 (PCN, summary)",
+    "Supplementary Fig. 4: Copy number ranges and plasmid counts by defense subtype."
+  )
+
+plot_S04 |>
   ggplot2::ggsave(
-    filename = "plots/figS08.pdf",
+    filename = "plots/figS04.pdf",
     width = 182.4,
     height = 300,
     units = "mm"
@@ -1091,13 +1155,13 @@ cor_pcn_def <- cor.test(
 
 cor_pcn_def
 
-logistic_model <- glm(
+logistic_model_pcn <- glm(
   has_defense ~ pcn + plasmid_length + pcn:plasmid_length,
   data = correlation_data,
   family = binomial()
 )
 
-summary(logistic_model)
+summary(logistic_model_pcn)
 
 correlation_data_no_pcn <- plsdb_metadata_rep |>
   dplyr::left_join(
@@ -1116,45 +1180,133 @@ cor_len_def_no_pcn <- cor.test(
 
 cor_len_def_no_pcn
 
-logistic_model <- glm(
+logistic_model_length <- glm(
   has_defense ~ plasmid_length,
   data = correlation_data_no_pcn,
   family = binomial()
 )
 
-summary(logistic_model)
+summary(logistic_model_length)
+
+# SUPPLEMENTARY TABLE 8
+
+correlation_summary <- list(
+  cor_len_def, cor_len_def_no_pcn, cor_len_pcn, cor_pcn_def
+) |>
+  purrr::map_dfr(broom::tidy) |>
+  dplyr::select(estimate, p.value)
+
+regression_summary <- dplyr::bind_rows(
+  broom::tidy(logistic_model_pcn) |> dplyr::filter(term == "plasmid_length"),
+  broom::tidy(logistic_model_length) |> dplyr::filter(term == "plasmid_length"),
+  broom::tidy(logistic_model_pcn) |> dplyr::filter(term %in% c("pcn", "pcn:plasmid_length"))
+) |>
+  dplyr::select(estimate, p.value)
+
+table_S08 <- tibble::tibble(
+  Analysis = rep(c("Spearman correlation", "Logistic regression"), each = 4),
+  Dataset = rep(c("Subset with PCN data", "Representative plasmids", "Subset with PCN data", "Subset with PCN data"), 2),
+  Predictor = c("Length", "Length", "Length", "PCN", "Length", "Length", "PCN", "Length x PCN"),
+  Outcome = c("Defense presence", "Defense presence", "PCN", rep("Defense presence", 5)),
+  n = rep(c(nrow(correlation_data), nrow(correlation_data_no_pcn), rep(nrow(correlation_data), 2)), 2)
+) |>
+  dplyr::bind_cols(dplyr::bind_rows(correlation_summary, regression_summary)) |>
+  dplyr::mutate(
+    `Odds ratio` = dplyr::if_else(
+      Analysis == "Logistic regression",
+      exp(estimate * dplyr::if_else(Predictor == "PCN", 1, 10000)),
+      NA_real_
+    ),
+    `p-value` = dplyr::if_else(p.value < 2.2e-16, "< 2.2e-16", trimws(format.pval(p.value, digits = 3)))
+  ) |>
+  dplyr::select(Analysis, Dataset, Predictor, Outcome, n, `Effect size (ρ or β)` = estimate, `Odds ratio`, `p-value`) |>
+  dplyr::bind_rows(tibble::tibble(Analysis = c(
+    NA_character_,
+    "ρ = Spearman correlation; β = logistic regression coefficient; PCN = plasmid copy number.",
+    "Length coefficients are per bp. Odds ratios use 10 kb for length, one copy for PCN, and 10 kb × copy for the interaction."
+  )))
+
+dir.create("supplementary_tables", showWarnings = FALSE)
+table_S08 |>
+  writexl::write_xlsx("supplementary_tables/table_S08_correlation_between_pcn_length_and_defense.xlsx")
 
 # FIGURE 2E — INC GROUPS -------------------------------------------------------
 
-inc_data <- plsdb_metadata_rep |>
-  dplyr::left_join(
-    plsdb_plasmid_defense,
-    by = dplyr::join_by(plasmid_seqid)
-  ) |>
-  dplyr::mutate(
-    has_defense = dplyr::if_else(
-      any(feature == "defense", na.rm = TRUE),
-      "With Defense",
-      "No Defense"
-    ),
-    .by = plasmid_seqid
-  ) |>
-  dplyr::distinct(plasmid_seqid, type, rep) |>
+inc_membership <- plsdb_metadata_rep |>
+  dplyr::select(plasmid_seqid, rep) |>
   tidyr::separate_longer_delim(rep, ",") |>
+  dplyr::mutate(rep = stringr::str_trim(rep)) |>
   dplyr::filter(!is.na(rep)) |>
   dplyr::filter(!stringr::str_detect(rep, "rep_cluster_")) |>
+  dplyr::distinct(plasmid_seqid, rep) |>
   dplyr::mutate(n_rep = dplyr::n_distinct(plasmid_seqid), .by = rep) |>
-  dplyr::filter(n_rep >= 100) |>
-  dplyr::summarise(n = dplyr::n(), .by = c(rep, n_rep, type)) |>
-  dplyr::mutate(p = n / sum(n), .by = rep) |>
+  dplyr::filter(n_rep >= 100)
+
+inc_defense_types <- plsdb_plasmid_defense |>
   dplyr::filter(!is.na(type)) |>
+  dplyr::distinct(plasmid_seqid, type) |>
+  dplyr::mutate(
+    n_defense_types = dplyr::n(),
+    fractional_weight = 1 / n_defense_types,
+    .by = plasmid_seqid
+  )
+
+inc_observations <- inc_membership |>
+  dplyr::left_join(
+    inc_defense_types, by = dplyr::join_by(plasmid_seqid),
+    relationship = "many-to-many"
+  ) |>
+  dplyr::mutate(
+    has_defense = !is.na(type),
+    n_defense_types = tidyr::replace_na(n_defense_types, 0L),
+    fractional_weight = tidyr::replace_na(fractional_weight, 0)
+  )
+
+inc_summary <- inc_observations |>
+  dplyr::summarise(
+    n_rep = dplyr::n_distinct(plasmid_seqid),
+    n_with_defense = dplyr::n_distinct(plasmid_seqid[has_defense]),
+    system_diversity = dplyr::n_distinct(type, na.rm = TRUE),
+    .by = rep
+  ) |>
+  dplyr::mutate(defense_prevalence = n_with_defense / n_rep)
+
+inc_data <- inc_observations |>
+  dplyr::filter(!is.na(type)) |>
+  dplyr::summarise(
+    n_plasmids_with_type = dplyr::n_distinct(plasmid_seqid),
+    fractional_plasmids = sum(fractional_weight),
+    .by = c(rep, type)
+  ) |>
+  dplyr::left_join(inc_summary, by = dplyr::join_by(rep)) |>
+  dplyr::mutate(p = fractional_plasmids / n_rep) |>
   dplyr::mutate(type_p_sum = sum(p), .by = type) |>
   dplyr::mutate(rep_p_sum = sum(p), .by = rep) |>
-  dplyr::arrange(dplyr::desc(type_p_sum)) |>
+  dplyr::arrange(dplyr::desc(type_p_sum), type, rep) |>
   dplyr::mutate(top_n = dplyr::cur_group_id(), .by = type) |>
   dplyr::mutate(category = dplyr::if_else(top_n > 7, "Other", type)) |>
-  dplyr::mutate(system_diversity = dplyr::n_distinct(type), .by = rep) |>
   dplyr::mutate(diversity_norm = system_diversity / n_rep)
+
+inc_observations <- inc_observations |>
+  dplyr::left_join(
+    inc_data |> dplyr::distinct(type, category),
+    by = dplyr::join_by(type)
+  )
+
+inc_proportions <- inc_observations |>
+  dplyr::filter(has_defense) |>
+  dplyr::summarise(
+    n_plasmids_with_category = dplyr::n_distinct(plasmid_seqid),
+    fractional_plasmids = sum(fractional_weight),
+    .by = c(rep, category, n_rep)
+  ) |>
+  dplyr::mutate(p = fractional_plasmids / n_rep)
+
+inc_stack_check <- inc_proportions |>
+  dplyr::summarise(stack_total = sum(p), .by = rep) |>
+  dplyr::left_join(inc_summary, by = dplyr::join_by(rep))
+stopifnot(all(abs(inc_stack_check$stack_total -
+                    inc_stack_check$defense_prevalence) < 1e-12))
 
 fill_order <- inc_data |>
   dplyr::arrange(dplyr::desc(category)) |>
@@ -1170,8 +1322,7 @@ y_order <- inc_data |>
 
 y_order
 
-plot_proportion <- inc_data |>
-  dplyr::summarise(p = sum(p), .by = c(rep, category)) |>
+plot_proportion <- inc_proportions |>
   ggplot2::ggplot(ggplot2::aes(
     x = p,
     y = factor(rep, y_order),
@@ -1180,16 +1331,21 @@ plot_proportion <- inc_data |>
   ggplot2::geom_col(
     width = 0.8
   ) +
+  ggplot2::scale_y_discrete(labels = function(x) {
+    lapply(x, function(label) {
+      if (label == "IncI-gamma/K1") expression("IncI-" * gamma * "/K1")[[1]] else label
+    })
+  }) +
   ggplot2::scale_fill_manual(
     values = c(
-      "#C5CAD7",
-      "#E69F00",
-      "#56B4E9",
-      "#009E73",
-      "#F0E442",
-      "#0072B2",
-      "#D55E00",
-      "#CC79A7"
+      "Other" = "#C5CAD7",
+      "Tmn" = "#E69F00",
+      "RM" = "#56B4E9",
+      "PifAC" = "#009E73",
+      "RloC" = "#F0E442",
+      "HEC-04" = "#0072B2",
+      "Gabija" = "#D55E00",
+      "CBASS" = "#CC79A7"
     )
   ) +
   ggplot2::scale_x_continuous(
@@ -1197,10 +1353,14 @@ plot_proportion <- inc_data |>
     expand = ggplot2::expansion(),
     labels = scales::label_percent()
   ) +
-  ggplot2::labs(x = "Proportion with defense", y = "Inc group") +
+  ggplot2::labs(x = "Proportion with defense", y = "Inc group", fill = NULL) +
+  ggplot2::guides(fill = ggplot2::guide_legend(nrow = 2, byrow = TRUE)) +
   theme_custom(grid = "x") +
   ggplot2::theme(
-    legend.position = "bottom"
+    legend.position = "top",
+    legend.text = ggplot2::element_text(size = 7),
+    legend.key.size = ggplot2::unit(2.5, "mm"),
+    plot.margin = ggplot2::margin(1, 9, 1, 5.5)
   )
 
 plot_proportion
@@ -1225,7 +1385,8 @@ plot_plasmid_count <- inc_data |>
   ggplot2::theme(
     axis.title.y = ggplot2::element_blank(),
     axis.text.y = ggplot2::element_blank(),
-    axis.ticks.y = ggplot2::element_blank()
+    axis.ticks.y = ggplot2::element_blank(),
+    plot.margin = ggplot2::margin(1, 5.5, 1, 5.5)
   )
 
 plot_plasmid_count
@@ -1250,26 +1411,69 @@ plot_system_count <- inc_data |>
   ggplot2::theme(
     axis.title.y = ggplot2::element_blank(),
     axis.text.y = ggplot2::element_blank(),
-    axis.ticks.y = ggplot2::element_blank()
+    axis.ticks.y = ggplot2::element_blank(),
+    plot.margin = ggplot2::margin(1, 5.5, 1, 5.5)
   )
 
 plot_system_count
 
-plot_02E <- plot_proportion + plot_plasmid_count + plot_system_count + 
-  patchwork::plot_layout(widths = c(5, 1.5, 1.5))
+plot_02E <- plot_proportion + plot_plasmid_count + plot_system_count +
+  patchwork::plot_layout(widths = c(5, 1.5, 1.5), guides = "collect") &
+  ggplot2::theme(
+    legend.position = "top",
+    legend.box.spacing = ggplot2::unit(0, "pt"),
+    legend.margin = ggplot2::margin(0)
+  )
 
 plot_02E
+
+inc_proportions |>
+  dplyr::select(rep, category, n_plasmids_with_category,
+                fractional_plasmids, n_rep, p) |>
+  write_source_data(
+    "source_data_fig02",
+    "Fig. 2e (proportions)",
+    paste(
+      "Fig. 2e: Each defending plasmid contributes 1/k to each of its k",
+      "distinct defense types. p = fractional_plasmids / n_rep; the sum",
+      "of p within an Inc group is the proportion of plasmids with defense."
+    )
+  )
+
+inc_summary |>
+  dplyr::arrange(dplyr::desc(defense_prevalence), rep) |>
+  write_source_data(
+    "source_data_fig02",
+    "Fig. 2e (counts)",
+    paste(
+      "Fig. 2e: Unique plasmid counts, defense-positive plasmids,",
+      "distinct defense types and defense prevalence by Inc group."
+    )
+  )
+
+inc_observations |>
+  dplyr::select(rep, plasmid_seqid, has_defense, type, category,
+                n_defense_types, fractional_weight, n_rep) |>
+  write_source_data(
+    "source_data_fig02",
+    "Fig. 2e (observations)",
+    paste(
+      "Fig. 2e: Unique plasmid-Inc-type records underlying the fractional",
+      "stack. Within each Inc group, each defending plasmid has total",
+      "weight 1; plasmids without defense have weight 0."
+    )
+  )
 
 plot_02E |>
   ggplot2::ggsave(
     filename = "plots/fig02_E.pdf",
-    width = 90,
-    height = 83,
+    width = 76.5,
+    height = 70.5,
     units = "mm",
     dpi = 300
   )
 
-keep <- inc_data |> 
+keep <- inc_data |>
   dplyr::filter(n_rep >= 100) |>
   dplyr::distinct(rep) |>
   dplyr::pull()
@@ -1412,4 +1616,3 @@ inc_data |>
       )
     }
   )
-

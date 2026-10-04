@@ -26,7 +26,7 @@ To set up the same version of python (`3.14`), and install the required python
 packages, use [uv](https://docs.astral.sh/uv/):
 
 ```shell
-uv install
+uv sync --locked
 ```
 
 ## Required data
@@ -51,33 +51,57 @@ documents licensing and attribution for redistributed source material.
 > generated figures received minor aesthetic edits for their final published
 > versions.
 
+Run all code from the repository root. Run the R scripts in order:
+
+```shell
+mkdir -p plots
+Rscript fig01.R
+Rscript fig02.R
+Rscript fig03.R
+Rscript fig04.R
+Rscript fig05.R
+Rscript fig06.R
+```
+
+`fig01.R` prepares the taxonomy-enriched metadata used by later analyses.
+`fig02.R` prepares inputs used by `figED04.ipynb` and `figED05.ipynb`, and
+writes Supplementary Table 8. Then run all cells in `fig05.ipynb`,
+`fig06.ipynb`, `figED01.ipynb`, `figED04.ipynb`, `figED05.ipynb` and
+`figS09.ipynb`, selecting `.venv/bin/python` as the notebook kernel and keeping
+the repository root as the working directory. Finally, export the
+supplementary tables:
+
+```shell
+Rscript export_supplementary_tables.R
+```
+
 ### `fig01.R`
 
-Produces plots and statstics related to **Figure 1**, **Supplementary Figures
-2**, **3**, **4**, **5** and **6**, and the results sections: _**Plasmids are
-reservoirs of defense systems**_, _**Plasmid-encoded defenses are diverse and
-unevenly distributed**_, _**Many pairs of plasmid-encoded defenses co-occur more
-often than expected**_, and _**The distribution of plasmid-encoded defenses is
-distinct from chromosomes**_.
+Produces plots and statistics related to **Figure 1**, **Extended Data Figures
+2** and **3**, **Supplementary Figures 2** and **3**, and the results
+sections: _**Plasmids are reservoirs of defense systems**_, _**Plasmid-encoded
+defenses are diverse and unevenly distributed**_, _**Many pairs of
+plasmid-encoded defenses co-occur more often than expected**_, and _**The
+distribution of plasmid-encoded defenses is distinct from chromosomes**_.
 
 ### `fig02.R`
 
-Produces plots and statistics related to **Figure 2**, **Supplementary Figures
-7**, **8**, and **9**, and the results section: _**Defense systems are most
+Produces plots and statistics related to **Figure 2**, **Supplementary Figure
+4**, **Supplementary Table 8**, and the results section: _**Defense systems are most
 often found on large conjugative plasmids**_.
 
 ### `fig03.R`
 
 Produces plots and statistics related to **Figure 3**, **Supplementary Figures
-10**, and **11**, **Supplementary Tables 11**, **12**, **13**, and **14**, and
+5** and **6**, **Supplementary Tables 11**, **12**, **13**, and **14**, and
 the results section: _**Plasmids arm their hosts against phages and
 antibiotics**_.
 
 ### `fig04.R`
 
-Produces plots and statistics related to **Figure 4**, **Supplementary Figures
-12** and **13**, and the results section: _**Defense is more common than AMR in
-plasmids across ecosystems**_.
+Produces plots and statistics related to **Figure 4**, **Extended Data Figure
+6**, **Supplementary Figure 7**, and the results section: _**Defense is more
+common than AMR in plasmids across ecosystems**_.
 
 ### `fig05.R`
 
@@ -96,40 +120,49 @@ _**Plasmids drive defense system mobilization across broad taxonomic scales**_.
 
 ### `fig06.ipynb`
 
-Produces plots and statistics related to **Figure 6**, **Supplementary Figure
-17**, and the results section: _**Plasmids drive defense system mobilization
+Produces plots and statistics related to **Figure 6**, **Extended Data Figure
+7**, and the results section: _**Plasmids drive defense system mobilization
 across broad taxonomic scales**_.
 
-### `figS03.ipynb`
+### `figED01.ipynb`
 
-Produces plots and statistics related to **Supplementary Figure 3** and the
+Produces plots and statistics related to **Extended Data Figure 1** and the
 results section: _**Plasmid-encoded defenses are diverse and unevenly
 distributed**_.
 
-### `figS07.ipynb`
+### `figED04.ipynb`
 
-Produces plots and statistics related to **Supplementary Figure 7** and the
+Produces plots and statistics related to **Extended Data Figure 4** and the
+results section: _**Defense systems are most often found on large conjugative
+plasmids**_.
+
+### `figED05.ipynb`
+
+Produces plots and statistics related to **Extended Data Figure 5** and the
 results section: _**Defense systems are most often found on large conjugative
 plasmids**_.
 
 ### `figS09.ipynb`
 
 Produces plots and statistics related to **Supplementary Figure 9** and the
-results section: _**Defense systems are most often found on large conjugative
-plasmids**_.
-
-### `figS15.ipynb`
-
-Produces plots and statistics related to **Supplementary Figure 15** and the
 results section: _**An interactive network for exploring the global
 plasmidome**_.
 
+### `export_supplementary_tables.R`
+
+Writes the publication versions of **Supplementary Tables 1–7** and **9–18** to
+`supplementary_tables/`, using the full input and analysis files in `data/`.
+**Supplementary Table 8** is written by `fig02.R` to
+`supplementary_tables/table_S08_correlation_between_pcn_length_and_defense.xlsx`.
+The export script also combines all 18 tables into `supplementary_tables.xlsx`,
+with an index of table names, descriptions and links.
+
 ## Bundled data
 
-### Figure 1 and Supplementary Figures 2–6
+### Figure 1, Extended Data Figures 1–3, and Supplementary Figures 2–3
 
 - `data/defense_system_unification.xlsx` contains the cross-tool defense-system
-  name mapping and is equivalent to **Supplementary Table 2**.
+  name mapping used for **Supplementary Table 2**.
 - `data/plsdb_plasmid-host_metadata.xlsx` contains PLSDB plasmid and host
   metadata before GTDB taxonomy is added. It is the starting version of
   **Supplementary Table 1**.
@@ -145,48 +178,46 @@ plasmidome**_.
 - `data/gtdb/bac120_metadata_r207.tsv` and `data/gtdb/ar53_metadata_r207.tsv`
   are archived release 207 metadata. They are bundled for reference but are not
   read by the current figure scripts.
-- `data/plsdb_plasmid-host_metadata_with_taxonomy.xlsx` is **Supplementary Table
-  1** after GTDB taxonomy is added by `fig01.R`. It is reused by `fig01.R`,
-  `fig04.R`, `fig06.ipynb`, and `figS03.ipynb`.
+- `data/plsdb_plasmid-host_metadata_with_taxonomy.xlsx` contains the full data
+  for **Supplementary Table 1** after GTDB taxonomy is added by `fig01.R`.
+  It is reused by `fig01.R`, `fig04.R`, `fig06.ipynb`, and `figED01.ipynb`.
 - `data/plsdb_defense_type_affinity.xlsx` and
   `data/plsdb_defense_subtype_affinity.xlsx` contain defense co-occurrence
-  affinity results generated by `fig01.R`; they are equivalent to
+  affinity results generated by `fig01.R` and used for
   **Supplementary Tables 5** and **6**.
 - `data/plsdb_defense_enrichment_by_phylum.xlsx` contains the plasmid-versus-
-  chromosome defense enrichment tests generated by `fig01.R`; it is equvalent to
+  chromosome defense enrichment tests generated by `fig01.R` and used for
   **Supplementary Table 7**.
 
 The GTDB trees and metadata were retrieved from the
 [GTDB data repository](https://data.gtdb.aau.ecogenomic.org/).
 
-### Figure 2 and Supplementary Figures 7–9
+### Figure 2, Extended Data Figures 4–5, and Supplementary Figure 4
 
 - `data/plsdb_gene_annotations.tsv` contains the functional annotations for
   PLSDB plasmid genes described in the Methods. It is used by `fig02.R`,
   `fig04.R`, and `fig06.ipynb`.
 - `data/plsdb_plasmid_mob.xlsx` contains the PLSDB plasmid mobility
-  classifications generated by `fig02.R` and then used by `figS07.ipynb`.
+  classifications generated by `fig02.R` and then used by `figED04.ipynb`.
 - `data/plsdb_plasmid_inc.xlsx` contains the Inc classifications generated by
   `fig02.R` for the plasmids in **Figure 2e** and is then used by
-  `figS09.ipynb`.
+  `figED05.ipynb`.
 
-### Figure 3 and Supplementary Figures 10–11
+### Figure 3 and Supplementary Figures 5–6
 
 - `data/plsdb_plasmid_amr.xlsx` and `data/plsdb_plasmid_antidefense.xlsx`
   contain PLSDB AMR and anti-defense calls and are equivalent to **Supplementary
   Tables 9** and **10**.
 - `data/plsdb_defense_type_amr_class_affinity.xlsx`,
-  `data/plsdb_defense_subtype_amr_class_affinity.xlsx`,
-  `data/plsdb_defense_type_amr_type_affinity.xlsx`, and
+  `data/plsdb_defense_type_amr_type_affinity.xlsx`,
+  `data/plsdb_defense_subtype_amr_class_affinity.xlsx`, and
   `data/plsdb_defense_subtype_amr_type_affinity.xlsx` contain the defense–AMR
-  co-occurrence affinity results generated by `fig03.R`. They are equivalent to
+  co-occurrence affinity results generated by `fig03.R` and used for
   **Supplementary Tables 11**, **12**, **13**, and **14**.
 - `data/pNDM-Mar_skani_matrix.txt` and `data/pNDM-Mar_skani_matrix.txt.af`
-  contain the ANI and alignment-fraction matrices used for **Figure 3e**. They
-  were produced from the pNDM-Mar-like sequences retrieved by `fig03.R`, as
-  described in the Methods.
+  contain the ANI and alignment-fraction matrices used for **Figure 3e**.
 
-### Figures 4–5 and Supplementary Figures 12–13 and 15
+### Figures 4–5, Extended Data Figure 6, and Supplementary Figures 7–9
 
 - `data/merged_master_table.tsv` combines PLSDB and IMG/PR plasmid metadata and
   annotations. It incorporates information represented in **Supplementary Tables
@@ -194,16 +225,18 @@ The GTDB trees and metadata were retrieved from the
   `fig04.R` and `fig05.R`.
 - `data/imgpr_plasmid_defense.xlsx`, `data/imgpr_plasmid_amr.xlsx`, and
   `data/imgpr_plasmid-host_metadata.xlsx` contain the IMG/PR defense calls, AMR
-  calls, and plasmid/host metadata. They are equivalent to **Supplementary
+  calls, and full plasmid/host metadata used for **Supplementary
   Tables 15**, **16**, and **17**.
+- `data/sorensen_dice.xlsx` contains the full nearest-neighbour similarity
+  results used for **Supplementary Table 18**.
 - `data/imgpr_gene_annotations.tsv` contains the IMG/PR plasmid-gene annotations
   used by `fig04.R` and `fig06.ipynb`. `data/imgpr_eggnog.tsv` supplies the
   EggNOG COG categories joined to those annotations by `fig04.R`.
 - `data/plsdb_imgpr_plasmid_ptu.xlsx`, `data/plsdb_imgpr_plasmid_has_amr.xlsx`,
   and `data/plsdb_imgpr_plasmid_has_antidef.xlsx` are combined PLSDB/IMG/PR PTU
-  assignments and per-plasmid feature indicators used by `figS15.ipynb`.
+  assignments and per-plasmid feature indicators used by `figS09.ipynb`.
 
-### Figure 6 and Supplementary Figure 17
+### Figure 6 and Extended Data Figure 7
 
 - `data/transfers_plasmid_host.tsv`, `data/transfers_plasmid_plasmid.tsv`,
   `data/transfers_whole_plasmid_chromosome.tsv`,

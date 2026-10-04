@@ -3,6 +3,12 @@ data.tar.gz
 data.tar.gz.sha256
 .venv/
 .Rproj.user/
+.Rhistory
+.RData
 .DS_Store
 __pycache__/
 .ipynb_checkpoints/
+source_data/
+supplementary_tables/
+supplementary_tables.xlsx
+plots/

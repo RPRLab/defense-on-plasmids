@@ -1612,6 +1612,21 @@
       ],
       "Hash": "6994d1c3ea954f29de6aeca5da95c99d"
     },
+    "openxlsx2": {
+      "Package": "openxlsx2",
+      "Version": "1.25",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "R6",
+        "Rcpp",
+        "grDevices",
+        "stringi",
+        "utils"
+      ],
+      "Hash": "27babbc37843f498b9f0d1eb676732c7"
+    },
     "optimParallel": {
       "Package": "optimParallel",
       "Version": "1.0-2",

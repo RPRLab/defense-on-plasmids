@@ -1,15 +1,30 @@
 library(patchwork)
 
+write_source_data <- function(data, figure, name, description) {
+  dir.create("source_data", showWarnings = FALSE)
+  path <- glue::glue("source_data/{figure}.xlsx")
+  wb <- if (file.exists(path)) openxlsx2::wb_load(path) else openxlsx2::wb_workbook()
+  if (name %in% wb$get_sheet_names()) wb$remove_worksheet(name)
+  data <- purrr::modify(data, \(x) tidyr::replace_na(x, NA))
+  wb$add_worksheet(name)$add_data(name, description, col_names = FALSE)
+  wb$add_data(name, data, start_row = 3, na = "NA")
+  purrr::walk2(data, seq_along(data), \(x, column)
+    purrr::walk(which(is.infinite(x)), \(row)
+      wb$add_data(name, as.character(x[row]), start_row = row + 3,
+                 start_col = column, col_names = FALSE)))
+  wb$freeze_pane(name, first_active_row = 4)$save(path, overwrite = TRUE)
+}
+
 # READ PLSDB DATA --------------------------------------------------------------
 
 plsdb_metadata <- readxl::read_xlsx(
   "data/plsdb_plasmid-host_metadata.xlsx",
   col_types = c(
-    "text", "text", "logical", "text", "text", "logical", "numeric", "numeric", 
-    "text", "text", "text", "text", "text", "text", "text", "text", "text", 
-    "text", "text", "text", "text", "text", "text", "text", "numeric", 
-    "numeric", "text", "text", "text", "text", "text", "text", "text", "text", 
-    "text", "text", "text", "numeric", "numeric", "text", "text", "numeric", 
+    "text", "text", "logical", "text", "text", "logical", "numeric", "numeric",
+    "text", "text", "text", "text", "text", "text", "text", "text", "text",
+    "text", "text", "text", "text", "text", "text", "text", "numeric",
+    "numeric", "text", "text", "text", "text", "text", "text", "text", "text",
+    "text", "text", "text", "numeric", "numeric", "text", "text", "numeric",
     "text", "numeric", "text", "numeric"
   )
 )
@@ -165,7 +180,7 @@ for_venn <- plasmid_features_vs_mobility |>
       TRUE ~ "NA"
     )
   ) |>
-  dplyr::distinct(plasmid_seqid, category)  
+  dplyr::distinct(plasmid_seqid, category)
 
 region_names <- c(
   "DS",
@@ -191,6 +206,23 @@ total_population <- nrow(plsdb_metadata_rep)
 observed_population <- sum(region_counts$n)
 
 n_neither <- total_population - observed_population
+
+region_counts |>
+  dplyr::bind_rows(tibble::tibble(category = "Neither", n = n_neither)) |>
+  dplyr::mutate(total_population = total_population, proportion = n / total_population) |>
+  write_source_data(
+    "source_data_fig03",
+    "Fig. 3a",
+    "Fig. 3a: Counts and proportions of plasmids with defense, antidefense and AMR."
+  )
+
+plasmid_feature_categories |>
+  dplyr::count(category, mobility) |>
+  write_source_data(
+    "source_data_fig03",
+    "Fig. 3b",
+    "Fig. 3b: Plasmid counts by trait combination and mobility."
+  )
 
 disjoint_counts <- stats::setNames(
   region_counts$n,
@@ -222,28 +254,28 @@ ordered_region_colours <- unname(
 
 euler_box_plot_03A <- plot(
   fit_03A,
-  
+
   fills = list(
     mode = "disjoint",
     fill = ordered_region_colours,
     alpha = 1
   ),
-  
+
   edges = list(
     col = NA,
     lwd = 0
   ),
-  
+
   complement = list(
     fill = NA,
     col = NA,
     lwd = 0,
     label = ""
   ),
-  
+
   labels = FALSE,
   quantities = FALSE,
-  
+
   margin = grid::unit(0, "mm"),
   padding = grid::unit(0, "mm")
 )
@@ -384,7 +416,7 @@ stat_main_cat |>
 
 stat_all_feat <- plasmid_feature_cat_stats |>
   dplyr::filter(category == "ADS-AMR-DS")
-  
+
 stat_all_feat |>
   dplyr::select(!n) |>
   purrr::pwalk(
@@ -566,6 +598,14 @@ clinical_categories |>
     }
   )
 
+clinical_samples |>
+  dplyr::count(category, mobility) |>
+  write_source_data(
+    "source_data_fig03",
+    "Fig. 3c (counts)",
+    "Fig. 3c: Clinical plasmid counts by trait combination and mobility."
+  )
+
 plot_03C <- clinical_samples |>
   ggplot2::ggplot(
     ggplot2::aes(
@@ -658,7 +698,7 @@ clinical_conj_hatrick_species <-  plasmid_feature_categories |>
     ) |>
     dplyr::summarise(n = sum(n), .by = species) |>
     dplyr::mutate(p = n / sum(n))
-    
+
 clinical_conj_hatrick_species
 
 clinical_conj_hatrick_species |>
@@ -698,6 +738,20 @@ species_comparison <- clinical_conj_hatrick_species |>
         replacement = "\\1. "
       ) |>
       stringr::str_replace("O. species", "Other species")
+  )
+
+species_comparison |>
+  dplyr::filter(species != "Other species") |>
+  dplyr::mutate(
+    denominator = dplyr::if_else(
+      category == "All plasmids", nrow(plsdb_metadata_rep),
+      sum(clinical_conj_hatrick_species$n)
+    )
+  ) |>
+  write_source_data(
+    "source_data_fig03",
+    "Fig. 3d",
+    "Fig. 3d: Species counts, proportions and totals."
   )
 
 x_order_species <- species_comparison |>
@@ -929,7 +983,7 @@ def_type_amr_class_matrix <- plasmid_defense_types |>
 if (!file.exists("data/plsdb_defense_type_amr_class_affinity.xlsx")) {
   def_type_amr_class_affinity <- def_type_amr_class_matrix |>
     CooccurrenceAffinity::affinity(row.or.col = "col", squarematrix = c("all"))
-  
+
   def_type_amr_class_affinity_filt <- def_type_amr_class_affinity$all |>
     tibble::as_tibble() |>
     dplyr::filter(
@@ -946,7 +1000,7 @@ if (!file.exists("data/plsdb_defense_type_amr_class_affinity.xlsx")) {
           stringr::str_remove(plasmid_amr_classes$entity, "^.*:")
         )
     )
-  
+
   writexl::write_xlsx(
     def_type_amr_class_affinity_filt,
     "data/plsdb_defense_type_amr_class_affinity.xlsx"
@@ -980,15 +1034,19 @@ fill_limit <- max(
   abs(min(def_type_amr_class_affinity_for_plot$alpha_mle, na.rm = TRUE))
 )
 
-y_order <- rev(colnames(def_type_amr_class_affinity$occur_mat[-1])) |>
-  intersect(def_type_amr_class_affinity_for_plot$entity_2)
+y_order <- rev(unique(def_type_amr_class_affinity_for_plot$entity_2))
+x_order <- unique(def_type_amr_class_affinity_for_plot$entity_1)
 
-x_order <- colnames(
-  def_type_amr_class_affinity$occur_mat
-)[
-  -length(colnames(def_type_amr_class_affinity$occur_mat))
-] |>
-  intersect(def_type_amr_class_affinity_for_plot$entity_1)
+def_type_amr_class_affinity_for_plot |>
+  dplyr::select(
+    entity_1, entity_2, entity_1_count_mA, entity_2_count_mB,
+    obs_cooccur_X, total_N, alpha_mle, p_value
+  ) |>
+  write_source_data(
+    "source_data_supplementary_fig05",
+    "S Fig. 5a",
+    "Supplementary Fig. 5a: Defense type and AMR class co-occurrence counts, affinities and P values."
+  )
 
 plot_def_type_amr_class_affinity <- def_type_amr_class_affinity_for_plot |>
   ggplot2::ggplot(ggplot2::aes(x = entity_1, y = entity_2, fill = alpha_mle)) +
@@ -1056,7 +1114,7 @@ plot_def_type_amr_class_affinity
 
 plot_def_type_amr_class_affinity |>
   ggplot2::ggsave(
-    filename = "plots/figS10_A.pdf",
+    filename = "plots/figS05_A.pdf",
     width = 182.4,
     height = 182.4,
     units = "mm"
@@ -1078,7 +1136,7 @@ def_subtype_amr_class_matrix <- plasmid_defense_subtypes |>
 if (!file.exists("data/plsdb_defense_subtype_amr_class_affinity.xlsx")) {
   def_subtype_amr_class_affinity <- def_subtype_amr_class_matrix |>
     CooccurrenceAffinity::affinity(row.or.col = "col", squarematrix = c("all"))
-  
+
   def_subtype_amr_class_affinity_filt <- def_subtype_amr_class_affinity$all |>
     tibble::as_tibble() |>
     dplyr::filter(
@@ -1089,7 +1147,7 @@ if (!file.exists("data/plsdb_defense_subtype_amr_class_affinity.xlsx")) {
         unique(plasmid_defense_subtypes$entity) &
         entity_1 %in% unique(plasmid_amr_classes$entity)
     )
-  
+
   writexl::write_xlsx(
     def_subtype_amr_class_affinity_filt,
     "data/plsdb_defense_subtype_amr_class_affinity.xlsx"
@@ -1124,15 +1182,19 @@ fill_limit <- max(
   abs(min(def_subtype_amr_class_affinity_for_plot$alpha_mle, na.rm = TRUE))
 )
 
-y_order <- rev(colnames(def_subtype_amr_class_affinity$occur_mat[-1])) |>
-  intersect(def_subtype_amr_class_affinity_for_plot$entity_2)
+y_order <- rev(unique(def_subtype_amr_class_affinity_for_plot$entity_2))
+x_order <- unique(def_subtype_amr_class_affinity_for_plot$entity_1)
 
-x_order <- colnames(
-  def_subtype_amr_class_affinity$occur_mat
-)[
-  -length(colnames(def_subtype_amr_class_affinity$occur_mat))
-] |>
-  intersect(def_subtype_amr_class_affinity_for_plot$entity_1)
+def_subtype_amr_class_affinity_for_plot |>
+  dplyr::select(
+    entity_1, entity_2, entity_1_count_mA, entity_2_count_mB,
+    obs_cooccur_X, total_N, alpha_mle, p_value
+  ) |>
+  write_source_data(
+  "source_data_supplementary_fig05",
+  "S Fig. 5b",
+  "Supplementary Fig. 5b: Defense subtype and AMR class co-occurrence counts, affinities and P values."
+)
 
 plot_def_subtype_amr_class_affinity <- def_subtype_amr_class_affinity_for_plot |>
   ggplot2::ggplot(ggplot2::aes(x = entity_1, y = entity_2, fill = alpha_mle)) +
@@ -1200,7 +1262,7 @@ plot_def_subtype_amr_class_affinity
 
 plot_def_subtype_amr_class_affinity |>
   ggplot2::ggsave(
-    filename = "plots/figS10_B.pdf",
+    filename = "plots/figS05_B.pdf",
     width = 182.4,
     height = 182.4,
     units = "mm"
@@ -1223,7 +1285,7 @@ def_type_amr_type_matrix <- plasmid_defense_types |>
 if (!file.exists("data/plsdb_defense_type_amr_type_affinity.xlsx")) {
   def_type_amr_type_affinity <- def_type_amr_type_matrix |>
     CooccurrenceAffinity::affinity(row.or.col = "col", squarematrix = c("all"))
-  
+
   def_type_amr_type_affinity_filt <- def_type_amr_type_affinity$all |>
     tibble::as_tibble() |>
     dplyr::filter(
@@ -1240,7 +1302,7 @@ if (!file.exists("data/plsdb_defense_type_amr_type_affinity.xlsx")) {
           stringr::str_remove(plasmid_amr_types$entity, "^.*:")
         )
     )
-  
+
   writexl::write_xlsx(
     def_type_amr_type_affinity_filt,
     "data/plsdb_defense_type_amr_type_affinity.xlsx"
@@ -1275,15 +1337,19 @@ fill_limit <- max(
   abs(min(def_type_amr_type_affinity_for_plot$alpha_mle, na.rm = TRUE))
 )
 
-y_order <- rev(colnames(def_type_amr_type_affinity$occur_mat[-1])) |>
-  intersect(def_type_amr_type_affinity_for_plot$entity_2)
+y_order <- rev(unique(def_type_amr_type_affinity_for_plot$entity_2))
+x_order <- unique(def_type_amr_type_affinity_for_plot$entity_1)
 
-x_order <- colnames(
-  def_type_amr_type_affinity$occur_mat
-)[
-  -length(colnames(def_type_amr_type_affinity$occur_mat))
-] |>
-  intersect(def_type_amr_type_affinity_for_plot$entity_1)
+def_type_amr_type_affinity_for_plot |>
+  dplyr::select(
+    entity_1, entity_2, entity_1_count_mA, entity_2_count_mB,
+    obs_cooccur_X, total_N, alpha_mle, p_value
+  ) |>
+  write_source_data(
+    "source_data_supplementary_fig05",
+    "S Fig. 5c",
+    "Supplementary Fig. 5c: Defense type and AMR type co-occurrence counts, affinities and P values."
+  )
 
 plot_def_type_amr_type_affinity <- def_type_amr_type_affinity_for_plot |>
   ggplot2::ggplot(ggplot2::aes(x = entity_1, y = entity_2, fill = alpha_mle)) +
@@ -1351,7 +1417,7 @@ plot_def_type_amr_type_affinity
 
 plot_def_type_amr_type_affinity |>
   ggplot2::ggsave(
-    filename = "plots/figS10_C.pdf",
+    filename = "plots/figS05_C.pdf",
     width = 182.4,
     height = 182.4,
     units = "mm"
@@ -1374,7 +1440,7 @@ def_subtype_amr_type_matrix <- plasmid_defense_subtypes |>
 if (!file.exists("data/plsdb_defense_subtype_amr_type_affinity.xlsx")) {
   def_subtype_amr_type_affinity <- def_subtype_amr_type_matrix |>
     CooccurrenceAffinity::affinity(row.or.col = "col", squarematrix = c("all"))
-  
+
   def_subtype_amr_type_affinity_filt <- def_subtype_amr_type_affinity$all |>
     tibble::as_tibble() |>
     dplyr::filter(
@@ -1391,7 +1457,7 @@ if (!file.exists("data/plsdb_defense_subtype_amr_type_affinity.xlsx")) {
           stringr::str_remove(plasmid_amr_types$entity, "^.*:")
         )
     )
-  
+
   writexl::write_xlsx(
     def_subtype_amr_type_affinity_filt,
     "data/plsdb_defense_subtype_amr_type_affinity.xlsx"
@@ -1426,15 +1492,19 @@ fill_limit <- max(
   abs(min(def_subtype_amr_type_affinity_for_plot$alpha_mle, na.rm = TRUE))
 )
 
-y_order <- rev(colnames(def_subtype_amr_type_affinity$occur_mat[-1])) |>
-  intersect(def_subtype_amr_type_affinity_for_plot$entity_2)
+y_order <- rev(unique(def_subtype_amr_type_affinity_for_plot$entity_2))
+x_order <- unique(def_subtype_amr_type_affinity_for_plot$entity_1)
 
-x_order <- colnames(
-  def_subtype_amr_type_affinity$occur_mat
-)[
-  -length(colnames(def_subtype_amr_type_affinity$occur_mat))
-] |>
-  intersect(def_subtype_amr_type_affinity_for_plot$entity_1)
+def_subtype_amr_type_affinity_for_plot |>
+  dplyr::select(
+    entity_1, entity_2, entity_1_count_mA, entity_2_count_mB,
+    obs_cooccur_X, total_N, alpha_mle, p_value
+  ) |>
+  write_source_data(
+    "source_data_supplementary_fig05",
+    "S Fig. 5d",
+    "Supplementary Fig. 5d: Defense subtype and AMR type co-occurrence counts, affinities and P values."
+  )
 
 plot_def_subtype_amr_type_affinity <- def_subtype_amr_type_affinity_for_plot |>
   ggplot2::ggplot(ggplot2::aes(x = entity_1, y = entity_2, fill = alpha_mle)) +
@@ -1502,7 +1572,7 @@ plot_def_subtype_amr_type_affinity
 
 plot_def_subtype_amr_type_affinity |>
   ggplot2::ggsave(
-    filename = "plots/figS10_D.pdf",
+    filename = "plots/figS05_D.pdf",
     width = 182.4,
     height = 182.4,
     units = "mm"
@@ -1565,7 +1635,7 @@ stat_most_negative_cat |>
 
 class_all_neg <- def_subtype_amr_class_affinity_filt |>
   dplyr::filter(entity_1_count_mA >= 50) |>
-  dplyr::mutate(p_value = as.double(p_value)) |> 
+  dplyr::mutate(p_value = as.double(p_value)) |>
   dplyr::filter(p_value < 0.05) |>
   dplyr::mutate(
     all_neg = dplyr::case_when(
@@ -1578,7 +1648,7 @@ class_all_neg <- def_subtype_amr_class_affinity_filt |>
 
 type_all_neg <- def_subtype_amr_type_affinity_filt |>
   dplyr::filter(entity_1_count_mA >= 50) |>
-  dplyr::mutate(p_value = as.double(p_value)) |> 
+  dplyr::mutate(p_value = as.double(p_value)) |>
   dplyr::filter(p_value < 0.05) |>
   dplyr::mutate(
     all_neg = dplyr::case_when(
@@ -1603,49 +1673,47 @@ def_subtype_amr_class_affinity_filt |>
 pNDM_MAR <- plsdb_metadata_rep |>
   dplyr::filter(stringr::str_detect(plasmidfinder, "pNDM-MAR"))
 
-pNDM_MAR_accessions <- pNDM_MAR |>
-  dplyr::distinct(plasmid_seqid)
-
-vector <- pNDM_MAR_accessions |> dplyr::pull()
-chunk_size <- 20
-splits <- seq(1, length(vector), by = chunk_size)
-chunks <- purrr::map(
-  .x = splits,
-  .f = ~ vector[.x:min(.x + chunk_size - 1, length(vector))]
-)
-
-seqs_list <- purrr::map(
-  .x = chunks,
-  .f = function(.x) {
-    post <- rentrez::entrez_post(db = "nuccore", id = .x, rettype = "fasta")
-    fetch <- rentrez::entrez_fetch(
-      db = "nuccore",
-      rettype = "fasta",
-      web_history = post
-    )
-    fetch
-  },
-  .progress = TRUE
-)
-
-seqs <- unlist(seqs_list) |>
-  stringr::str_split(">") |>
-  unlist() |>
-  as.list() |>
-  purrr::discard(~ . == "") |>
-  purrr::map(~ paste0(">", .))
-
-names <- stringr::str_extract(seqs, "(?<=>)[^\\s]+")
-
-names(seqs) <- names
-
-outdir <- "data/pNDM-Mar/"
-
-fs::dir_create(outdir)
-
-purrr::iwalk(seqs, ~ write(.x, file = paste0(outdir, .y, ".fna")))
-
-
+# pNDM_MAR_accessions <- pNDM_MAR |>
+#   dplyr::distinct(plasmid_seqid)
+#
+# vector <- pNDM_MAR_accessions |> dplyr::pull()
+# chunk_size <- 20
+# splits <- seq(1, length(vector), by = chunk_size)
+# chunks <- purrr::map(
+#   .x = splits,
+#   .f = ~ vector[.x:min(.x + chunk_size - 1, length(vector))]
+# )
+#
+# seqs_list <- purrr::map(
+#   .x = chunks,
+#   .f = function(.x) {
+#     post <- rentrez::entrez_post(db = "nuccore", id = .x, rettype = "fasta")
+#     fetch <- rentrez::entrez_fetch(
+#       db = "nuccore",
+#       rettype = "fasta",
+#       web_history = post
+#     )
+#     fetch
+#   },
+#   .progress = TRUE
+# )
+#
+# seqs <- unlist(seqs_list) |>
+#   stringr::str_split(">") |>
+#   unlist() |>
+#   as.list() |>
+#   purrr::discard(~ . == "") |>
+#   purrr::map(~ paste0(">", .))
+#
+# names <- stringr::str_extract(seqs, "(?<=>)[^\\s]+")
+#
+# names(seqs) <- names
+#
+# outdir <- "data/pNDM-Mar/"
+#
+# fs::dir_create(outdir)
+#
+# purrr::iwalk(seqs, ~ write(.x, file = paste0(outdir, .y, ".fna")))
 
 read_skani_matrix <- function(path) {
   readr::read_delim(
@@ -1669,6 +1737,13 @@ pNDM_MAR_skani_af_matrix <- read_skani_matrix(
 
 colnames(pNDM_MAR_skani_matrix) <- rownames(pNDM_MAR_skani_matrix)
 colnames(pNDM_MAR_skani_af_matrix) <- rownames(pNDM_MAR_skani_af_matrix)
+
+tibble::rownames_to_column(as.data.frame(pNDM_MAR_skani_matrix), "plasmid_seqid") |>
+  write_source_data(
+    "source_data_fig03",
+    "Fig. 3e (ANI)",
+    "Fig. 3e: Pairwise average nucleotide identity (%) between pNDM-Mar-like plasmids."
+  )
 
 pNDM_MAR_dist <- stats::as.dist(1 - pNDM_MAR_skani_matrix / 100)
 pNDM_MAR_hc <- hclust(pNDM_MAR_dist)
@@ -1989,6 +2064,49 @@ plot_pNDM_MAR_ads <- pNDM_MAR_ads |>
     plot.margin = ggplot2::margin(0, 0, 0, 0)
   )
 
+pNDM_MAR_location |>
+  dplyr::select(plasmid_seqid, country) |>
+  write_source_data(
+    "source_data_supplementary_fig06",
+    "S Fig. 6 (traits)",
+    "Supplementary Fig. 6: Plasmid IDs and countries."
+  )
+
+plot_pNDM_MAR_tree$data |>
+  dplyr::select(parent, node, branch.length, label, isTip) |>
+  write_source_data(
+    "source_data_supplementary_fig06",
+    "S Fig. 6 (tree)",
+    "Supplementary Fig. 6: ANI tree nodes and branches."
+)
+
+plot_pNDM_MAR_ds$data |>
+  dplyr::distinct() |>
+  dplyr::arrange(match(subtype, plot_pNDM_MAR_ds_x_order)) |>
+  write_source_data(
+    "source_data_supplementary_fig06",
+    "S Fig. 6 (defense)",
+    "Supplementary Fig. 6: Defense subtype presence and absence, with subtypes in plot order."
+    )
+
+plot_pNDM_MAR_ads$data |>
+  dplyr::distinct() |>
+  dplyr::arrange(match(subtype, plot_pNDM_MAR_ads_x_order)) |>
+  write_source_data(
+    "source_data_supplementary_fig06",
+    "S Fig. 6 (anti-def)",
+    "Supplementary Fig. 6: Antidefense subtype presence and absence, with subtypes in plot order."
+    )
+
+plot_pNDM_MAR_amr$data |>
+  dplyr::distinct() |>
+  dplyr::arrange(match(class, plot_pNDM_MAR_amr_x_order)) |>
+  write_source_data(
+    "source_data_supplementary_fig06",
+    "S Fig. 6 (AMR)",
+    "Supplementary Fig. 6: AMR class presence and absence, with classes in plot order."
+  )
+
 plot_pNDM_MAR_tree +
   plot_pNDM_MAR_name +
   plot_pNDM_MAR_amr +
@@ -1998,7 +2116,7 @@ plot_pNDM_MAR_tree +
   patchwork::plot_layout(nrow = 1, widths = c(0.02, 0.05, NA, NA, NA, 0.2))
 
 ggplot2::ggsave(
-  "plots/figS11.pdf",
+  "plots/figS06.pdf",
   width = 20,
   height = 30,
   limitsize = FALSE
@@ -2006,8 +2124,8 @@ ggplot2::ggsave(
 
 # QUANTITATIVE ANALYSIS --------------------------------------------------------
 
-pNDM_MAR_ds |> 
-  dplyr::filter(present == TRUE) |> 
+pNDM_MAR_ds |>
+  dplyr::filter(present == TRUE) |>
   nrow() |>
   (\(n) cli::cli_alert_info("{n} defense systems in pNDM-MAR-like plasmids"))()
 
@@ -2018,8 +2136,8 @@ pNDM_MAR_ds |>
   nrow() |>
   (\(n) cli::cli_alert_info("{n} defense subtypes in pNDM-MAR-like plasmids"))()
 
-pNDM_MAR_amr |> 
-  dplyr::filter(present == TRUE) |> 
+pNDM_MAR_amr |>
+  dplyr::filter(present == TRUE) |>
   nrow() |>
   (\(n) cli::cli_alert_info("{n} AMR systems in pNDM-MAR-like plasmids"))()
 
@@ -2030,8 +2148,8 @@ pNDM_MAR_amr_subtype |>
   nrow() |>
   (\(n) cli::cli_alert_info("{n} AMR subtypes in pNDM-MAR-like plasmids"))()
 
-pNDM_MAR_ads |> 
-  dplyr::filter(present == TRUE) |> 
+pNDM_MAR_ads |>
+  dplyr::filter(present == TRUE) |>
   nrow() |>
   (\(n) cli::cli_alert_info("{n} Anti-defense systems in pNDM-MAR-like plasmids"))()
 
@@ -2273,6 +2391,26 @@ phy_map <- phytools::phylo.to.map(
   plot = FALSE,
   direction = "downwards"
 )
+
+pNDM_MAR_location |>
+  dplyr::select(plasmid_seqid, loc_lat, loc_lng) |>
+  dplyr::mutate(displayed_on_map = !is.na(loc_lat), highlighted = plasmid_seqid %in% pNDM_MAR_sample) |>
+  write_source_data(
+    "source_data_fig03",
+    "Fig. 3e (map)",
+    "Fig. 3e: Plasmid locations and highlighted accessions on the map."
+  )
+
+data.frame(
+  parent = phy_map$tree$edge[, 1], child = phy_map$tree$edge[, 2],
+  branch_length = phy_map$tree$edge.length,
+  child_label = phy_map$tree$tip.label[phy_map$tree$edge[, 2]]
+) |>
+  write_source_data(
+    "source_data_fig03",
+    "Fig. 3e (tree)",
+    "Fig. 3e: Map tree nodes and branches."
+  )
 
 pdf(
   "plots/fig03_E_map.pdf",
@@ -2663,6 +2801,46 @@ plot_pNDM_MAR_source_filt <- pNDM_MAR |>
     legend.position = "NA",
     plot.background = ggplot2::element_blank(),
     plot.margin = ggplot2::margin(0, 0, 0, 0)
+  )
+
+plot_pNDM_MAR_source_filt$data |>
+  dplyr::select(plasmid_seqid, taxonomy_species, isolation_source) |>
+  dplyr::left_join(
+    pNDM_MAR_location_filt |> dplyr::select(plasmid_seqid, loc_lat, loc_lng, country),
+    by = "plasmid_seqid"
+  ) |>
+  dplyr::mutate(heatmap_y_order = match(plasmid_seqid, pNDM_MAR_tree_filt_y_order)) |>
+  write_source_data(
+    "source_data_fig03",
+    "Fig. 3e (meta)",
+    "Fig. 3e: Plasmid IDs, hosts, locations and isolation sources."
+  )
+
+plot_pNDM_MAR_ds_filt$data |>
+  dplyr::distinct() |>
+  dplyr::arrange(match(subtype, plot_pNDM_MAR_ds_filt_x_order)) |>
+  write_source_data(
+    "source_data_fig03",
+    "Fig. 3e (defense)",
+    "Fig. 3e: Defense subtype presence and absence, with subtypes in plot order."
+  )
+
+plot_pNDM_MAR_ads_filt$data |>
+  dplyr::distinct() |>
+  dplyr::arrange(match(subtype, plot_pNDM_MAR_ads_filt_x_order)) |>
+  write_source_data(
+    "source_data_fig03",
+    "Fig. 3e (anti-def)",
+    "Fig. 3e: Antidefense subtype presence and absence, with subtypes in plot order."
+  )
+
+plot_pNDM_MAR_amr_filt$data |>
+  dplyr::distinct() |>
+  dplyr::arrange(match(class, plot_pNDM_MAR_amr_filt_x_order)) |>
+  write_source_data(
+    "source_data_fig03",
+    "Fig. 3e (AMR)",
+    "Fig. 3e: AMR class presence and absence, with classes in plot order."
   )
 
 plot_fig03_E_heatmap <-

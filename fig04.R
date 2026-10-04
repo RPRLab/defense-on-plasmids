@@ -1,5 +1,20 @@
 library(patchwork)
 
+write_source_data <- function(data, figure, name, description) {
+  dir.create("source_data", showWarnings = FALSE)
+  path <- glue::glue("source_data/{figure}.xlsx")
+  wb <- if (file.exists(path)) openxlsx2::wb_load(path) else openxlsx2::wb_workbook()
+  if (name %in% wb$get_sheet_names()) wb$remove_worksheet(name)
+  data <- purrr::modify(data, \(x) tidyr::replace_na(x, NA))
+  wb$add_worksheet(name)$add_data(name, description, col_names = FALSE)
+  wb$add_data(name, data, start_row = 3, na = "NA")
+  purrr::walk2(data, seq_along(data), \(x, column)
+    purrr::walk(which(is.infinite(x)), \(row)
+      wb$add_data(name, as.character(x[row]), start_row = row + 3,
+                 start_col = column, col_names = FALSE)))
+  wb$freeze_pane(name, first_active_row = 4)$save(path, overwrite = TRUE)
+}
+
 # READ DATA --------------------------------------------------------------------
 
 merged_metadata_raw <- readr::read_tsv(
@@ -12,20 +27,20 @@ clean_pair <- function(subtype, type) {
   if (is.na(subtype) || is.na(type)) {
     return(c(Unified_subtype_name = NA_character_, Type = NA_character_))
   }
-  
+
   subtype_vec <- strsplit(subtype, ";", fixed = TRUE)[[1]]
   type_vec    <- strsplit(type, ";", fixed = TRUE)[[1]]
-  
+
   keep <- !(subtype_vec %in% to_remove)
-  
+
   subtype_new <- subtype_vec[keep]
   type_new    <- type_vec[keep]
-  
+
   c(
     Unified_subtype_name =
       if (length(subtype_new) == 0) NA_character_
     else paste(subtype_new, collapse = ";"),
-    
+
     Type =
       if (length(type_new) == 0) NA_character_
     else paste(type_new, collapse = ";")
@@ -55,7 +70,8 @@ plsdb_filter <- plsdb_metadata |>
 
 imgpr_metadata <- readxl::read_xlsx(
   "data/imgpr_plasmid-host_metadata.xlsx"
-) 
+) |>
+  dplyr::distinct()
 
 imgpr_filter <- imgpr_metadata |>
   dplyr::filter(representative == TRUE) |>
@@ -65,11 +81,12 @@ imgpr_filter <- imgpr_metadata |>
 merged_metadata |>
   dplyr::filter(stringr::str_detect(id, "IMGPR")) |>
   dplyr::filter(id %in% imgpr_filter) |>
-  nrow()
+  dplyr::pull(id) |>
+  dplyr::n_distinct()
 
 imgpr_metadata |>
   dplyr::filter(representative == TRUE) |>
-  dplyr::summarise(n = dplyr::n(), .by = drop) |>
+  dplyr::summarise(n = dplyr::n_distinct(plasmid_seqid), .by = drop) |>
   dplyr::mutate(p = n / sum(n) * 100) |>
   dplyr::summarise(
     total = sum(n),
@@ -186,7 +203,14 @@ imgpr_has_defense_vs_length <- imgpr_plasmid_source |>
   dplyr::distinct(plasmid_seqid, plasmid_length, source, has_defense)
 
 
-plot_S12 <- imgpr_has_defense_vs_length |>
+imgpr_has_defense_vs_length |>
+  write_source_data(
+    "source_data_extended_data_fig06",
+    "ED Fig. 6",
+    "Extended Data Fig. 6: Plasmid lengths (bp), source and defense presence."
+  )
+
+plot_ED06 <- imgpr_has_defense_vs_length |>
   ggplot2::ggplot(
     ggplot2::aes(x = plasmid_length, fill = has_defense)
   ) +
@@ -242,10 +266,10 @@ plot_S12 <- imgpr_has_defense_vs_length |>
   ggplot2::facet_wrap(~source, ncol = 1) +
   ggplot2::coord_cartesian(clip = "off")
 
-plot_S12
+plot_ED06
 
 ggplot2::ggsave(
-  filename = "plots/figS12.pdf",
+  filename = "plots/figED06.pdf",
   width = 60,
   height = 70,
   units = "mm",
@@ -315,7 +339,7 @@ imgpr_is_complete <- merged_metadata |>
 
 merged_is_complete <- dplyr::bind_rows(plsdb_is_complete, imgpr_is_complete)
 
-all_reps_useful_meta <- all_reps |>
+all_reps_useful_meta <- merged_reps |>
   dplyr::left_join(merged_mobility, by = dplyr::join_by(plasmid_seqid)) |>
   dplyr::left_join(merged_length, by = dplyr::join_by(plasmid_seqid)) |>
   dplyr::left_join(merged_source, by = dplyr::join_by(plasmid_seqid)) |>
@@ -376,6 +400,14 @@ has_defense_vs_len_mob_common <- has_defense_vs_len_mob |>
   dplyr::filter(
     plasmid_length >= common_lower,
     plasmid_length <= common_upper
+  )
+
+has_defense_vs_len_mob_common |>
+  dplyr::select(plasmid_seqid, plasmid_length, mobility, has_defense) |>
+  write_source_data(
+    "source_data_fig04",
+    "Fig. 4a (observations)",
+    "Fig. 4a: Plasmid lengths (bp), mobility and defense presence."
   )
 
 retention_summary <- has_defense_vs_len_mob |>
@@ -493,13 +525,21 @@ prediction_data <- prediction_grid |>
     upper_ci = stats::plogis(eta + 1.96 * eta_se)
   )
 
+prediction_data |>
+  dplyr::select(plasmid_length, mobility, predicted_probability, lower_ci, upper_ci) |>
+  write_source_data(
+    "source_data_fig04",
+    "Fig. 4a (fitted)",
+    "Fig. 4a: Predicted defense prevalence and 95% confidence intervals."
+)
+
 calculate_gam_contrast <- function(
     comparator,
     fitted_model,
     lengths,
     mobility_levels
 ) {
-  
+
   newdata_conjugative <- tibble::tibble(
     plasmid_length = lengths,
     mobility = factor(
@@ -510,7 +550,7 @@ calculate_gam_contrast <- function(
     length_kb = plasmid_length / 1000,
     log10_kb = log10(length_kb)
   )
-  
+
   newdata_comparator <- tibble::tibble(
     plasmid_length = lengths,
     mobility = factor(
@@ -521,71 +561,71 @@ calculate_gam_contrast <- function(
     length_kb = plasmid_length / 1000,
     log10_kb = log10(length_kb)
   )
-  
+
   X_conjugative <- stats::predict(
     fitted_model,
     newdata = newdata_conjugative,
     type = "lpmatrix"
   )
-  
+
   X_comparator <- stats::predict(
     fitted_model,
     newdata = newdata_comparator,
     type = "lpmatrix"
   )
-  
+
   beta <- stats::coef(fitted_model)
-  
+
   V_beta <- stats::vcov(
     fitted_model,
     unconditional = TRUE
   )
-  
+
   eta_conjugative <- drop(
     X_conjugative %*% beta
   )
-  
+
   eta_comparator <- drop(
     X_comparator %*% beta
   )
-  
+
   probability_conjugative <- stats::plogis(
     eta_conjugative
   )
-  
+
   probability_comparator <- stats::plogis(
     eta_comparator
   )
-  
+
   gradient_conjugative <-
     X_conjugative *
     as.numeric(
       probability_conjugative *
         (1 - probability_conjugative)
     )
-  
+
   gradient_comparator <-
     X_comparator *
     as.numeric(
       probability_comparator *
         (1 - probability_comparator)
     )
-  
+
   gradient_difference <-
     gradient_conjugative -
     gradient_comparator
-  
+
   contrast_se <- sqrt(
     rowSums(
       (gradient_difference %*% V_beta) *
         gradient_difference
     )
   )
-  
+
   contrast_estimate <-
     probability_conjugative -
     probability_comparator
-  
+
   tibble::tibble(
     plasmid_length = lengths,
     length_kb = lengths / 1000,
@@ -625,6 +665,14 @@ contrast_data <- dplyr::bind_rows(
       )
     )
   )
+
+contrast_data |>
+  dplyr::select(plasmid_length, comparator, estimate, lower_ci, upper_ci) |>
+  write_source_data(
+    "source_data_fig04",
+    "Fig. 4a (differences)",
+    "Fig. 4a: Conjugative minus comparator defense prevalence and 95% confidence intervals."
+)
 
 contrast_significance <- contrast_data |>
   dplyr::mutate(
@@ -929,7 +977,7 @@ combined_plasmid_feature_categories <- all_reps_useful_meta |>
           if (isTRUE(defense)) "DS",
           if (isTRUE(amr)) "AMR"
         )
-        
+
         if (length(sets) == 0) {
           "NA"
         } else {
@@ -952,6 +1000,16 @@ venn_counts <- combined_plasmid_feature_categories |>
     category = c("DS", "AMR", "AMR-DS", "NA"),
     fill = list(n = 0)
   )
+
+combined_plasmid_feature_categories |>
+  dplyr::count(source, category) |>
+  dplyr::mutate(denominator = sum(n), proportion = n / denominator, .by = source) |>
+  dplyr::arrange(source, factor(category, c("AMR", "DS", "AMR-DS", "NA"))) |>
+  write_source_data(
+    "source_data_fig04",
+    "Fig. 4b,c",
+    "Fig. 4b,c: Plasmid counts and proportions by source (DS, defense; NA, neither)."
+)
 
 venn_counts |>
   dplyr::mutate(p = n / sum(n)) |>
@@ -1002,7 +1060,7 @@ scale_factor <- box_mm / measured_box_mm
 
 euler_box_plot <- plot(
   fit_04B,
-  
+
   fills = list(
     mode = "disjoint",
     fill = c(
@@ -1011,22 +1069,22 @@ euler_box_plot <- plot(
       "DS&AMR" = "#b0a276"
     )
   ),
-  
+
   edges = list(
     col = NA,
     lwd = 0
   ),
-  
+
   complement = list(
     fill = NA,
     col = NA,
     lwd = 0,
     label = ""
   ),
-  
+
   labels = FALSE,
   quantities = FALSE,
-  
+
   margin = grid::unit(0, "mm"),
   padding = grid::unit(0, "mm")
 )
@@ -1087,6 +1145,7 @@ plot_04_C <- combined_plasmid_feature_categories |>
   )) +
   ggplot2::geom_col(position = "dodge") +
   ggplot2::scale_fill_manual(values = c("#e3e5eb", "#a7adb7")) +
+  ggplot2::guides(fill = ggplot2::guide_legend(ncol = 1)) +
   ggupset::axis_combmatrix(sep = "-", clip = "off") +
   ggplot2::scale_y_continuous(
     expand = ggplot2::expansion(),
@@ -1125,6 +1184,7 @@ plot_04_C <- combined_plasmid_feature_categories |>
     legend.key.width = grid::unit(0.5, "cm"),
     legend.text = ggplot2::element_text(size = 7, colour = "black"),
     legend.position = "top",
+    legend.location = "plot",
     legend.title = ggplot2::element_blank(),
     plot.background = ggplot2::element_blank()
   ) +
@@ -1154,7 +1214,7 @@ defense_vs_amr <- all_reps_useful_meta |>
   dplyr::group_modify(\(.x, .y) {
     tab <- with(.x, table(defense, amr))
     test <- mcnemar.test(tab)
-    
+
     tibble::tibble(
       n = nrow(.x),
       defense_n = sum(.x$defense),
@@ -1172,7 +1232,7 @@ defense_vs_amr |>
     \(source, n, defense_n, defense_percent, amr_n, amr_percent, chi_squared, df, p_value) {
       cli::cli_alert_info(
         "{source}:
-      Defense detected in {format(defense_n, big.mark = ',')} plasmids ({round(defense_percent)}%), 
+      Defense detected in {format(defense_n, big.mark = ',')} plasmids ({round(defense_percent)}%),
       AMR detected in {format(amr_n, big.mark = ',')} plasmids ({round(amr_percent)}%)
       McNemar's chi-squared = {format(round(chi_squared, 1), big.mark = ',')}
       p = {p_value}\n\n"
@@ -1262,11 +1322,11 @@ functional_categories_imgpr <- functional_categories_imgpr_raw_processed |>
 
 functional_categories <-
   dplyr::bind_rows(
-    functional_categories_plsdb, 
+    functional_categories_plsdb,
     functional_categories_imgpr
   ) |>
   dplyr::filter(
-    seqid %in% all_reps$plasmid_seqid
+    seqid %in% merged_reps$plasmid_seqid
   ) |>
   dplyr::filter(!is.na(prot_id))
 
@@ -1303,100 +1363,113 @@ genes_per_category <- functional_categories_simple |>
   dplyr::distinct(seqid, prot_id, length_bin, source, category_expanded) |>
   dplyr::count(seqid, length_bin, source, category_expanded, name = "n_cat_genes")
 
-resistance_plasmids <- functional_categories_simple |>
+resistance_plasmids <- genes_per_category |>
   dplyr::filter(category_expanded %in% c("AMR", "Defense")) |>
   dplyr::distinct(seqid)
 
-genes_per_plasmid_res <- genes_per_plasmid |>
-  dplyr::semi_join(resistance_plasmids, by = "seqid")
-
-genes_per_category_res <- genes_per_category |>
-  dplyr::semi_join(resistance_plasmids, by = "seqid")
-
-props_res <- genes_per_category_res |>
-  dplyr::left_join(
-    genes_per_plasmid_res,
-    by = c("seqid", "length_bin", "source")
-  ) |>
+props_res <- genes_per_category |>
+  dplyr::semi_join(resistance_plasmids, by = "seqid") |>
+  dplyr::left_join(genes_per_plasmid, by = c("seqid", "length_bin", "source")) |>
   dplyr::mutate(prop = n_cat_genes / n_genes)
 
-result_res <- props_res |>
-  dplyr::group_by(length_bin, source, category = category_expanded) |>
-  dplyr::summarise(
-    mean_prop  = mean(prop),
-    sd_prop    = sd(prop),
-    n_plasmids = dplyr::n_distinct(seqid),
-    .groups = "drop"
+category_order <- c("AMR", "Defense", "Mobilome", "Unknown")
+facet_order <- c("0-10", "10-50", "50-300", ">300")
+source_order <- c("Isolate", "Metagenomic")
+
+source_colours <- c(
+  Isolate = "#e3e5eb",
+  Metagenomic = "#a7adb7"
+)
+
+box_width <- 0.34
+
+plot_data <- props_res |>
+  dplyr::filter(
+    category_expanded %in% category_order
   ) |>
   dplyr::mutate(
-    se = sd_prop / sqrt(n_plasmids),
-    ci_low = pmax(mean_prop - 1.96 * se, 0),
-    ci_high = pmin(mean_prop + 1.96 * se, 1)
+    category = factor(
+      category_expanded,
+      levels = category_order
+    ),
+    length_bin = factor(
+      length_bin,
+      levels = facet_order
+    ),
+    source = factor(
+      source,
+      levels = source_order
+    ),
+    x_group = as.numeric(category) +
+      dplyr::if_else(
+        source == "Isolate",
+        -0.22,
+        0.22
+      )
   )
 
-bin_sizes_res <- genes_per_plasmid_res |>
-  dplyr::distinct(seqid, length_bin, source) |>
-  dplyr::count(length_bin, source, name = "n_all")
+cli::cli_alert_info(
+  "Fig. 4d: n plasmids (isolate / metagenomic), ordered as {paste(category_order, collapse = ', ')}."
+)
 
-source_map <- c(Isolate = "I", Metagenomic = "M")
-pad_width <- 8
+plot_data |>
+  dplyr::count(length_bin, category, source) |>
+  tidyr::pivot_wider(names_from = source, values_from = n) |>
+  dplyr::summarise(
+    counts = paste(scales::comma(Isolate), scales::comma(Metagenomic), sep = " / ", collapse = "; "),
+    .by = length_bin
+  ) |>
+  purrr::pwalk(\(length_bin, counts) cli::cli_text("{length_bin} kb: {counts}"))
 
-facet_labels_res <- bin_sizes_res |>
-  dplyr::mutate(src_short = dplyr::recode(source, !!!source_map)) |>
-  dplyr::select(length_bin, src_short, n_all) |>
-  tidyr::complete(length_bin, src_short, fill = list(n_all = 0L)) |>
-  tidyr::pivot_wider(names_from = src_short, values_from = n_all) |>
-  dplyr::mutate(
-    I_txt = stringr::str_pad(scales::comma(I), width = pad_width, side = "left"),
-    M_txt = stringr::str_pad(scales::comma(M), width = pad_width, side = "left"),
-    label = paste0(length_bin, " kb\n", I_txt, "\n", M_txt)
-  )
-
-facet_labels_res <- setNames(facet_labels_res$label, facet_labels_res$length_bin)
-
-facet_labels_res
-
-facet_order <- c("0-10", "10-50", "50-300", ">300")
-cog_order <- c("AMR","Defense","Mobilome","Unknown","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","T","U","V","W","X","Y","Z")
-
-pd <- ggplot2::position_dodge(width = 0.9)
-
-sources_all <- c("Isolate", "Metagenomic")
-
-result_res_plot <- result_res |>
-  tidyr::complete(
-    length_bin,
-    category,
-    source = sources_all,
-    fill = list(
-      mean_prop = 0,
-      sd_prop = 0,
-      se = 0,
-      ci_low = 0,
-      ci_high = 0,
-      n_plasmids = 0
-    )
-  )
-
-plot_04_D <- result_res_plot |>
-  dplyr::filter(category %in% c("AMR","Defense","Mobilome","Unknown")) |>
-  ggplot2::ggplot(ggplot2::aes(
-    x = factor(category, levels = cog_order),
-    y = mean_prop,
+plot_04_D <- ggplot2::ggplot(
+  data = plot_data,
+  mapping = ggplot2::aes(
+    x = x_group,
+    y = prop,
     fill = source,
-    group = source
-  )) +
-  ggplot2::geom_col(linewidth = 0.24, position = pd, width = 0.9) +
-  ggplot2::geom_errorbar(
-    ggplot2::aes(ymin = ci_low, ymax = ci_high),
-    width = 0.25, linewidth = 0.24, position = pd
+    group = interaction(category, source)
+  )
+) +
+  ggplot2::geom_boxplot(
+    width = box_width,
+    position = "identity",
+    orientation = "x",
+    colour = "black",
+    linewidth = 0.24,
+    outlier.shape = NA
   ) +
-  ggplot2::scale_fill_manual(values = c("#e3e5eb", "#a7adb7")) +
+  ggplot2::scale_x_continuous(
+    breaks = seq_along(category_order),
+    labels = category_order,
+    limits = c(0.5, length(category_order) + 0.5),
+    expand = ggplot2::expansion(mult = 0)
+  ) +
   ggplot2::scale_y_continuous(
-    expand = ggplot2::expansion(),
-    labels = scales::percent_format()
+    breaks = seq(0, 1, by = 0.25),
+    labels = scales::percent_format(),
+    expand = ggplot2::expansion(
+      mult = c(0, 0)
+    )
   ) +
-  ggplot2::labs(x = "", y = "Proportion of plasmid genes") +
+  ggplot2::coord_cartesian(
+    ylim = c(0, 1)
+  ) +
+  ggplot2::scale_fill_manual(
+    values = source_colours,
+    limits = source_order,
+    breaks = source_order,
+    drop = FALSE
+  ) +
+  ggplot2::facet_wrap(
+    ~length_bin,
+    nrow = 1,
+    drop = FALSE
+  ) +
+  ggplot2::labs(
+    x = "",
+    y = "Proportion of plasmid genes",
+    fill = NULL
+  ) +
   ggplot2::theme_bw() +
   ggplot2::theme(
     text = ggplot2::element_text(size = 7, colour = "black"),
@@ -1433,77 +1506,77 @@ plot_04_D <- result_res_plot |>
 
 plot_04_D
 
+plot_data |>
+  dplyr::arrange(length_bin, category, source, seqid) |>
+  dplyr::select(seqid, length_bin, source, category_expanded, prop) |>
+  write_source_data(
+    "source_data_fig04",
+    "Fig. 4d (observations)",
+    "Fig. 4d: Gene proportions for individual plasmids."
+  )
+
 plot_04_D |>
   ggplot2::ggsave(
-    filename = "plots/fig04_D_tmp.pdf",
+    filename = "plots/fig04_D.pdf",
     width = 60.8,
-    height = 63.4,
+    height = 62.8,
     units = "mm",
     dpi = 300
-  )  
+  )
 
-plot_04C_sup <- result_res_plot |>
-  ggplot2::ggplot(ggplot2::aes(
-    x = factor(category, levels = cog_order),
-    y = mean_prop,
-    fill = source,
-    group = source
-  )) +
-  ggplot2::geom_col(linewidth = 0.24, position = pd, width = 0.9) +
-  ggplot2::geom_errorbar(
-    ggplot2::aes(ymin = ci_low, ymax = ci_high),
-    width = 0.25, linewidth = 0.24, position = pd
-  ) +
-  ggplot2::scale_fill_manual(values = c("#e3e5eb", "#a7adb7")) +
-  ggplot2::scale_y_continuous(
-    expand = ggplot2::expansion(),
-    labels = scales::percent_format()
-  ) +
-  ggplot2::labs(x = "", y = "Proportion of plasmid genes") +
-  ggplot2::theme_bw() +
-  ggplot2::theme(
-    text = ggplot2::element_text(size = 7, colour = "black"),
-    axis.text = ggplot2::element_text(size = 7, colour = "black"),
-    line = ggplot2::element_line(linewidth = 0.24),
-    axis.text.x = ggplot2::element_text(
-      size = 7,
-      colour = "black",
-      angle = 90,
-      hjust = 1,
-      vjust = 0.5
-    ),
-    axis.text.y = ggplot2::element_text(size = 7, colour = "black"),
-    axis.ticks.x = ggplot2::element_line(linewidth = 0.24, lineend = "round"),
-    axis.ticks.y = ggplot2::element_line(linewidth = 0.24, lineend = "round"),
-    axis.line = ggplot2::element_line(linewidth = 0.24, lineend = "round"),
-    axis.line.x = ggplot2::element_line(linewidth = 0.24, lineend = "round"),
-    axis.line.y = ggplot2::element_line(linewidth = 0.24, lineend = "round"),
-    panel.background = ggplot2::element_blank(),
-    panel.border = ggplot2::element_blank(),
-    panel.grid.major.x = ggplot2::element_blank(),
-    panel.grid.major.y = ggplot2::element_blank(),
-    panel.grid.minor.x = ggplot2::element_blank(),
-    panel.grid.minor.y = ggplot2::element_blank(),
-    strip.background = ggplot2::element_blank(),
-    legend.key.height = grid::unit(0.25, "cm"),
-    legend.key.width = grid::unit(0.5, "cm"),
-    legend.text = ggplot2::element_text(size = 7, colour = "black"),
-    legend.position = "top",
-    legend.title = ggplot2::element_blank(),
-    plot.background = ggplot2::element_blank()
-  ) +
-  ggplot2::facet_wrap(~factor(length_bin, facet_order), nrow = 1)
+# SUPPLEMENTARY FIGURE 7 -------------------------------------------------------
 
-plot_04C_sup
+cog_order <- c(category_order, setdiff(LETTERS, "S"))
 
-plot_04C_sup |>
+plot_data_sup <- props_res |>
+  dplyr::mutate(
+    category = factor(category_expanded, levels = cog_order),
+    length_bin = factor(length_bin, levels = facet_order),
+    source = factor(source, levels = source_order),
+    x_group = as.numeric(category) + dplyr::if_else(source == "Isolate", -0.22, 0.22)
+  )
+
+sample_sizes_sup <- plot_data_sup |>
+  dplyr::count(length_bin, category, source, .drop = FALSE) |>
+  tidyr::pivot_wider(names_from = source, values_from = n) |>
+  dplyr::mutate(label = paste(scales::comma(Isolate), scales::comma(Metagenomic), sep = " | "))
+
+plot_S07 <- ggplot2::`%+%`(plot_04_D, plot_data_sup) +
+  ggplot2::scale_x_continuous(
+    breaks = seq_along(cog_order),
+    labels = cog_order,
+    limits = c(0.5, length(cog_order) + 0.5),
+    expand = ggplot2::expansion(mult = 0)
+  ) +
+  ggplot2::geom_text(
+    data = sample_sizes_sup,
+    ggplot2::aes(x = as.numeric(category), y = 1.04, label = label),
+    inherit.aes = FALSE,
+    angle = 90, hjust = 0, size = 2.1
+  ) +
+  ggplot2::coord_cartesian(ylim = c(0, 1.65)) +
+  ggplot2::labs(caption = "n = isolate | metagenomic plasmids") +
+  ggplot2::theme(plot.caption = ggplot2::element_text(size = 7, hjust = 0))
+
+plot_S07
+
+plot_data_sup |>
+  dplyr::arrange(length_bin, category, source, seqid) |>
+  dplyr::select(seqid, length_bin, source, category_expanded, prop) |>
+  write_source_data(
+    "source_data_supplementary_fig07",
+    "S Fig. 7",
+    "Supplementary Fig. 7: Gene proportions for individual plasmids."
+  )
+
+plot_S07 |>
   ggplot2::ggsave(
-    filename = "plots/figS13.pdf",
-    width = 300,
-    height = 63.4,
+    filename = "plots/figS07.pdf",
+    width = 330,
+    height = 85,
     units = "mm",
     dpi = 300
-  )  
+  )
 
 within_tests <- props_res |>
   dplyr::filter(category_expanded %in% c("AMR", "Defense")) |>
@@ -1570,8 +1643,16 @@ features_by_ecosystem <- combined_plasmid_feature_categories |>
   dplyr::summarise(n = dplyr::n(), .by = c(category, eco_2)) |>
   dplyr::mutate(p = n / sum(n), .by = category) |>
   dplyr::mutate(eco_2 = dplyr::if_else(p <= 0.01, "Other", eco_2)) |>
-  dplyr::mutate(p = sum(p), .by = c(category, eco_2)) |>
-  dplyr::distinct(category, eco_2, .keep_all = TRUE)
+  dplyr::summarise(n = sum(n), .by = c(category, eco_2)) |>
+  dplyr::mutate(p = n / sum(n), .by = category)
+
+features_by_ecosystem |>
+  dplyr::select(category, eco_2, n, p) |>
+  write_source_data(
+    "source_data_fig04",
+    "Fig. 4e",
+    "Fig. 4e: Plasmid counts and proportions by trait and ecosystem."
+  )
 
 plot_04_E <- features_by_ecosystem |>
   ggplot2::ggplot(ggplot2::aes(
@@ -1583,6 +1664,7 @@ plot_04_E <- features_by_ecosystem |>
   ggplot2::scale_fill_manual(
     values = c("#0072B2", "#56B4E9", "#CC79A7", "#009E73", "#F0E442", "#E69F00", "#D55E00", "#C5CAD7")
   ) +
+  ggplot2::guides(fill = ggplot2::guide_legend(ncol = 2, byrow = TRUE)) +
   ggupset::axis_combmatrix(sep = "-", clip = "off") +
   ggplot2::scale_y_continuous(
     expand = ggplot2::expansion(),
@@ -1663,6 +1745,14 @@ imgpr_category_by_ecosystem <- imgpr_ecosystems |>
   dplyr::mutate(eco_p = eco_n / sum(n)) |>
   dplyr::mutate(eco = stringr::str_remove_all(eco, "^.*: "))
 
+imgpr_category_by_ecosystem |>
+  dplyr::select(eco, category, n, p) |>
+  write_source_data(
+    "source_data_fig04",
+    "Fig. 4f",
+    "Fig. 4f: Plasmid counts and proportions by ecosystem and trait."
+  )
+
 x_order_eco <- c(
   "Aquatic",
   "Terrestrial",
@@ -1685,6 +1775,7 @@ plot_04_F <- imgpr_category_by_ecosystem |>
   ggplot2::scale_fill_manual(
     values = c("#E69F00", "#009E73", "#0072B2")
   ) +
+  ggplot2::guides(fill = ggplot2::guide_legend(ncol = 1)) +
   ggplot2::scale_y_continuous(
     # limits = c(0, 0.25),
     expand = ggplot2::expansion(),
@@ -1741,13 +1832,13 @@ layout <- "
 AB
 "
 
-fig_04_EF <- 
+fig_04_EF <-
   plot_04_E +
   plot_04_F +
   patchwork::plot_layout(
     design = layout,
     guides = "collect",
-    axes = "collect_x", 
+    axes = "collect_x",
     widths = c(1, 1)
   ) &
   ggplot2::theme(legend.position = 'top')
@@ -1779,7 +1870,7 @@ imgpr_category_by_ecosystem |>
 amr_by_eco <- imgpr_category_by_ecosystem |>
   dplyr::mutate(
     amr_status = dplyr::if_else(
-      category %in% c("AMR", "AMR+DS"),
+      category %in% c("AMR", "AMR-DS"),
       "AMR_present",
       "AMR_absent"
     ),
@@ -1847,7 +1938,7 @@ category_eco_mat <- features_by_ecosystem |>
 pielou_evenness <- function(x) {
   p <- x / sum(x)
   p <- p[p > 0]
-  
+
   -sum(p * log(p)) / log(length(x))
 }
 
@@ -1863,7 +1954,7 @@ observed_differences <- c(
   "DS_vs_AMR" =
     observed_evenness[["DS"]] -
     observed_evenness[["AMR"]],
-  
+
   "DS_vs_AMR-DS" =
     observed_evenness[["DS"]] -
     observed_evenness[["AMR-DS"]]
@@ -1889,11 +1980,11 @@ permuted_differences <- vapply(
       MARGIN = 1,
       FUN = pielou_evenness
     )
-    
+
     c(
       "DS_vs_AMR" =
         evenness[[1]] - evenness[[2]],
-      
+
       "DS_vs_AMR-DS" =
         evenness[[1]] - evenness[[3]]
     )
@@ -1913,7 +2004,7 @@ evenness_p <- c(
   ) / (
     n_permutations + 1
   ),
-  
+
   "DS_vs_AMR-DS" = (
     1 + sum(
       permuted_differences["DS_vs_AMR-DS", ] >=
